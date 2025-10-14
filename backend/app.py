@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from itertools import count
 from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, Optional
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS

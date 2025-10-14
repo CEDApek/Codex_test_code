@@ -22,6 +22,8 @@ The initial commit created three cooperating pieces:
 - **Vue 3 single-page app (`frontend/`)** – renders a login form and, after
   authenticating, presents a dashboard with the logged-in user's identity, a
   community file catalogue, and an upload workflow.
+  authenticating, shows the mock wealth / balance information that comes back
+  from the API.
 - **Mock Hyperledger client (`hyperledger/`)** – represents the Fabric network
   while you are prototyping. It tracks users, upload / download balances, and
   wealth in memory so the demo behaves like the “mining while seeding” concept
@@ -80,6 +82,11 @@ shows the logged-in user, their ledger identity, and lets you switch between:
    during the session.
 2. **Upload a file** – captures a file name, size, and description and POSTs
    them to `/api/files`, immediately updating the list view with the new entry.
+the login form is submitted, the Vue component POSTs to `/api/login`; on a
+successful response it immediately requests the `/api/ledger/balance` endpoint
+and renders the JSON payload in the dashboard area. You can click the “Claim
+reward” button to trigger the `/api/ledger/reward` endpoint and watch the values
+update in real time.
 
 ### 3. Hyperledger integration roadmap
 

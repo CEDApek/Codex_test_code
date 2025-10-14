@@ -51,6 +51,21 @@
           @uploaded="handleUploaded"
         />
       </section>
+    <LoginForm @logged-in="handleLoggedIn" />
+    <section v-if="user" class="post-login">
+      <h2>Welcome back, {{ user.username }}!</h2>
+      <p>Your ledger identity: <strong>{{ user.ledgerIdentity }}</strong></p>
+      <article class="next-steps">
+        <h3>Next steps</h3>
+        <ol>
+          <li>Keep the client running to earn wealth rewards.</li>
+          <li>Accumulate upload to increase your site rank.</li>
+          <li>
+            Explore the Hyperledger Fabric network to connect with other
+            seeders.
+          </li>
+        </ol>
+      </article>
     </section>
   </main>
 </template>
@@ -96,6 +111,11 @@ function handleUploaded(newFile) {
 
 function openUploadTab() {
   activeTab.value = 'upload';
+
+const user = ref(null);
+
+function handleLoggedIn(payload) {
+  user.value = payload;
 }
 </script>
 
@@ -189,5 +209,18 @@ function openUploadTab() {
   border-radius: 20px;
   padding: 1.5rem;
   border: 1px solid rgba(255, 255, 255, 0.05);
+.post-login {
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 16px;
+  padding: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.post-login h2 {
+  margin-top: 0;
+}
+
+.next-steps ol {
+  padding-left: 1.5rem;
 }
 </style>
