@@ -7,9 +7,8 @@ ledger behaviour so the Vue frontend has a coherent API to talk to.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from itertools import count
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, Optional
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -24,19 +23,6 @@ class User:
     role: str
 
 
-@dataclass
-class SharedFile:
-    """Representation of a file that has been shared through the exchange."""
-
-    id: int
-    name: str
-    size: str
-    uploader: str
-    seeds: int
-    peers: int
-    description: str = ""
-
-
 app = Flask(__name__)
 CORS(app)
 
@@ -46,39 +32,6 @@ USERS: Dict[str, User] = {
 }
 
 ledger: LedgerClient = InMemoryLedger()
-
-
-FILES: List[SharedFile] = [
-    SharedFile(
-        id=1,
-        name="The Art of Seeding.pdf",
-        size="12.4 MB",
-        uploader="seedMaster",
-        seeds=42,
-        peers=5,
-        description="Illustrated guide to earning wealth rewards efficiently.",
-    ),
-    SharedFile(
-        id=2,
-        name="Nexus OST.mp3",
-        size="6.3 MB",
-        uploader="djHyper",
-        seeds=18,
-        peers=12,
-        description="Synthwave soundtrack to keep your node online.",
-    ),
-    SharedFile(
-        id=3,
-        name="ClientSetup.zip",
-        size="48.1 MB",
-        uploader="builderBee",
-        seeds=33,
-        peers=4,
-        description="Automation scripts to bootstrap a new seeding rig.",
-    ),
-]
-
-FILE_ID_COUNTER = count(start=len(FILES) + 1)
 
 
 @app.post("/api/login")
@@ -133,49 +86,6 @@ def ledger_reward() -> tuple[Dict[str, int], int]:
         return jsonify({"message": "User not found on ledger"}), 404
 
     return jsonify(updated), 200
-
-
-@app.get("/api/files")
-def list_files() -> tuple[List[Dict[str, object]], int]:
-    """Return the catalogue of files shared by the community."""
-
-    return jsonify([asdict(entry) for entry in FILES]), 200
-
-
-@app.post("/api/files")
-def upload_file() -> tuple[Dict[str, str], int]:
-    """Record a newly shared file in the in-memory catalogue."""
-
-    payload = request.get_json(silent=True) or {}
-    name = (payload.get("name") or "").strip()
-    size = (payload.get("size") or "").strip()
-    username = payload.get("username")
-    description = (payload.get("description") or "").strip()
-
-    if not username:
-        return jsonify({"message": "username is required"}), 400
-
-    if username not in USERS:
-        return jsonify({"message": "Unknown user"}), 404
-
-    if not name:
-        return jsonify({"message": "File name is required"}), 400
-
-    if not size:
-        return jsonify({"message": "File size is required"}), 400
-
-    entry = SharedFile(
-        id=next(FILE_ID_COUNTER),
-        name=name,
-        size=size,
-        uploader=username,
-        seeds=1,
-        peers=0,
-        description=description,
-    )
-    FILES.append(entry)
-
-    return jsonify(asdict(entry)), 201
 
 
 if __name__ == "__main__":
