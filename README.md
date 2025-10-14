@@ -20,6 +20,8 @@ The initial commit created three cooperating pieces:
 - **Flask API (`backend/`)** – exposes a handful of REST endpoints to log in
   and retrieve simulated ledger information.
 - **Vue 3 single-page app (`frontend/`)** – renders a login form and, after
+  authenticating, presents a dashboard with the logged-in user's identity, a
+  community file catalogue, and an upload workflow.
   authenticating, shows the mock wealth / balance information that comes back
   from the API.
 - **Mock Hyperledger client (`hyperledger/`)** – represents the Fabric network
@@ -51,6 +53,10 @@ The API exposes:
   wealth metrics from the mocked ledger.
 - `POST /api/ledger/reward` – simulates a mining reward, increasing the wealth
   and upload counters.
+- `GET /api/files` – returns a list of torrents currently shared by the
+  community (seeded in memory for demo purposes).
+- `POST /api/files` – accepts a JSON payload describing a file and records it in
+  the in-memory catalogue using the authenticated username as uploader.
 
 Under the hood the Flask routes use `hyperledger/ledger.py`. The mock ledger
 class keeps an in-memory dictionary keyed by username. When you call the reward
@@ -68,6 +74,14 @@ npm run dev
 ```
 
 The Vite dev server proxies API calls to the Flask backend on port `5000`. When
+the login form is submitted, the Vue component POSTs to `/api/login` and then
+fetches `/api/files` to populate the community catalogue view. The dashboard
+shows the logged-in user, their ledger identity, and lets you switch between:
+
+1. **Community files** – displays seeded demo torrents and anything you publish
+   during the session.
+2. **Upload a file** – captures a file name, size, and description and POSTs
+   them to `/api/files`, immediately updating the list view with the new entry.
 the login form is submitted, the Vue component POSTs to `/api/login`; on a
 successful response it immediately requests the `/api/ledger/balance` endpoint
 and renders the JSON payload in the dashboard area. You can click the “Claim

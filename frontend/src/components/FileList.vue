@@ -1,5 +1,10 @@
 <template>
   <div class="file-list">
+    <div class="list-actions">
+      <button type="button" class="upload-button" @click="emitUploadRequest">
+        Share your own file
+      </button>
+    </div>
     <p v-if="loading" class="status">Loading shared files…</p>
     <p v-else-if="error" class="status error">{{ error }}</p>
     <p v-else-if="!files.length" class="status empty">
@@ -46,12 +51,40 @@ defineProps({
     default: '',
   },
 });
+
+const emit = defineEmits(['request-upload']);
+
+function emitUploadRequest() {
+  emit('request-upload');
+}
 </script>
 
 <style scoped>
 .file-list {
   display: grid;
   gap: 1rem;
+}
+
+.list-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.upload-button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.55rem 1.3rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: #0f0f0f;
+  background: linear-gradient(135deg, #2cb67d, #7f5af0);
+  box-shadow: 0 10px 25px rgba(127, 90, 240, 0.2);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.upload-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 35px rgba(44, 182, 125, 0.25);
 }
 
 .status {
