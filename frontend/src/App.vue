@@ -6,7 +6,11 @@
         Share resources, earn wealth, and climb the leaderboards.
       </p>
     </section>
+
+    <!-- Login form shown if not logged in -->
     <LoginForm v-if="!user" @logged-in="handleLoggedIn" />
+
+    <!-- Dashboard shown after login -->
     <section v-else class="dashboard">
       <header class="dashboard-header">
         <div>
@@ -51,7 +55,9 @@
           @uploaded="handleUploaded"
         />
       </section>
-    <LoginForm @logged-in="handleLoggedIn" />
+    </section>
+
+    <!-- Optional welcome panel below -->
     <section v-if="user" class="post-login">
       <h2>Welcome back, {{ user.username }}!</h2>
       <p>Your ledger identity: <strong>{{ user.ledgerIdentity }}</strong></p>
@@ -72,10 +78,10 @@
 
 <script setup>
 import { ref } from 'vue';
+import axios from 'axios';
 import LoginForm from './components/LoginForm.vue';
 import FileList from './components/FileList.vue';
 import UploadForm from './components/UploadForm.vue';
-import axios from 'axios';
 
 const user = ref(null);
 const files = ref([]);
@@ -111,11 +117,6 @@ function handleUploaded(newFile) {
 
 function openUploadTab() {
   activeTab.value = 'upload';
-
-const user = ref(null);
-
-function handleLoggedIn(payload) {
-  user.value = payload;
 }
 </script>
 
@@ -209,6 +210,8 @@ function handleLoggedIn(payload) {
   border-radius: 20px;
   padding: 1.5rem;
   border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
 .post-login {
   background: rgba(0, 0, 0, 0.35);
   border-radius: 16px;
