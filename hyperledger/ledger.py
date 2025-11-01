@@ -22,6 +22,7 @@ class SharedFile:
     category: str = "general"  # 文件分类
     upload_time: float = None  # 上传时间戳
     is_active: bool = True  # 是否活跃可用
+    storage_path: str = ""  # 后端保存的文件路径（可选）
     
     def __post_init__(self):
         if self.upload_time is None:
@@ -41,7 +42,8 @@ class SharedFile:
             'file_hash': self.file_hash,
             'category': self.category,
             'upload_time': self.upload_time,
-            'is_active': self.is_active
+            'is_active': self.is_active,
+            'storage_path': self.storage_path,
         }
     
     @classmethod
