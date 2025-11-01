@@ -20,6 +20,7 @@ class SharedFile:
     owner_address: str  # 所有者区块链地址
     file_hash: str = ""  # 文件哈希，用于验证文件完整性
     category: str = "general"  # 文件分类
+    extension: str = ""  # 文件扩展名
     upload_time: float = None  # 上传时间戳
     is_active: bool = True  # 是否活跃可用
     storage_path: str = ""  # 后端保存的文件路径（可选）
@@ -41,6 +42,7 @@ class SharedFile:
             'owner_address': self.owner_address,
             'file_hash': self.file_hash,
             'category': self.category,
+            'extension': self.extension,
             'upload_time': self.upload_time,
             'is_active': self.is_active,
             'storage_path': self.storage_path,
@@ -73,7 +75,8 @@ class ResourceManager:
                 peers=5,
                 description="Illustrated guide to earning wealth rewards efficiently.",
                 owner_address="",
-                category="document"
+                category="document",
+                extension="pdf"
             ),
             SharedFile(
                 id=self._get_next_id(),
@@ -84,7 +87,8 @@ class ResourceManager:
                 peers=12,
                 description="Synthwave soundtrack to keep your node online.",
                 owner_address="",
-                category="audio"
+                category="audio",
+                extension="mp3"
             ),
             SharedFile(
                 id=self._get_next_id(),
@@ -95,7 +99,8 @@ class ResourceManager:
                 peers=4,
                 description="Automation scripts to bootstrap a new seeding rig.",
                 owner_address="",
-                category="software"
+                category="software",
+                extension="zip"
             )
         ]
         

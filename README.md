@@ -47,16 +47,25 @@ flask run
 
 The API exposes:
 
-- `POST /api/login` – validates demo credentials (see below) and returns a mock
-  token plus the Fabric identity ID.
-- `GET /api/ledger/balance?username=admin` – retrieves upload, download, and
-  wealth metrics from the mocked ledger.
+- `POST /api/login` – validates demo credentials (see below), returns a mock
+  token plus the Fabric identity ID, and includes the category list for the
+  upload form.
+- `GET /api/ledger/balance?username=<name>` – retrieves upload counts, pending
+  transactions, and wealth metrics from the mocked ledger.
 - `POST /api/ledger/reward` – simulates a mining reward, increasing the wealth
-  and upload counters.
-- `GET /api/files` – returns a list of torrents currently shared by the
-  community (seeded in memory for demo purposes).
-- `POST /api/files` – accepts a JSON payload describing a file and records it in
-  the in-memory catalogue using the authenticated username as uploader.
+  and upload counters while returning the mined block metadata.
+- `GET /api/files` – returns the shared catalogue compiled from the community
+  seeders and the currently logged-in user.
+- `GET /api/files/categories` – exposes the canonical category list used by the
+  upload form and filter controls.
+- `GET /api/files/<owner>/<file_id>` – fetches the latest metadata for an
+  individual entry so the frontend detail page stays in sync with the ledger.
+- `GET /api/files/<owner>/<file_id>/download` – streams the stored asset (or a
+  generated placeholder for seeded demo files) so every catalogue entry is
+  downloadable.
+- `POST /api/files` – accepts either JSON or multipart form data, enforces the
+  100&nbsp;MB limit, stores uploaded binaries on disk, and records the file on the
+  ledger with size, hash, and category metadata.
 - `POST /api/register` – creates additional demo accounts that can log in and
   publish resources.
 
@@ -75,20 +84,51 @@ npm install
 npm run dev
 ```
 
-The Vite dev server proxies API calls to the Flask backend on port `5000`. When
-the login form is submitted, the Vue component POSTs to `/api/login` and then
-fetches `/api/files` to populate the community catalogue view. The dashboard
-shows the logged-in user, their ledger identity, and lets you switch between:
+The Vite dev server proxies API calls to the Flask backend on port `5000`. After
+logging in the dashboard now provides:
 
-1. **Community files** – displays seeded demo torrents and anything you publish
-   during the session.
-2. **Upload a file** – captures a file name, size, and description and POSTs
-   them to `/api/files`, immediately updating the list view with the new entry.
-the login form is submitted, the Vue component POSTs to `/api/login`; on a
-successful response it immediately requests the `/api/ledger/balance` endpoint
-and renders the JSON payload in the dashboard area. You can click the “Claim
-reward” button to trigger the `/api/ledger/reward` endpoint and watch the values
-update in real time.
+1. **Community files** – a searchable, filterable catalogue that lets you drill
+   into a dedicated detail page for each file and download it directly from the
+   backend.
+2. **Upload a file** – a drag-and-drop form that calculates the size
+   automatically, enforces the 0–100&nbsp;MB limit, and captures a category so the
+   ledger can classify the resource.
+
+In addition to the file tools, the top of the dashboard shows your current
+wealth, pending transaction count, a quick mining button, and an account wealth
+board that tracks the seeded demo users (`admin`, `alice`, `bob`) alongside the
+logged-in account. Every mining run is recorded in a short activity feed so you
+can copy block hashes for lab notes.
+
+### Demo credentials and multi-user testing
+
+Three accounts are bundled so you can try different Hyperledger workflows right
+away:
+
+| Username | Password | Role          |
+|----------|----------|---------------|
+| `admin`  | `admin`  | administrator |
+| `alice`  | `alice`  | member        |
+| `bob`    | `bob`    | member        |
+
+Every time the Flask app starts it ensures these users exist inside the mocked
+ledger so you can log in as any of them without extra setup. To simulate a
+resource sharing session:
+
+1. Log in as **Alice** or **Bob** using the credentials above.
+2. Publish a file through the upload form (or `POST /api/files` with
+   `{"username": "alice", ...}`) to queue a declaration transaction.
+3. Switch accounts (e.g., log in as Bob) and trigger `POST /api/download` to
+   record a download transaction against Alice's upload.
+4. Mine the pending transactions by calling `POST /api/ledger/reward` (UI
+   button) or `POST /api/mine` with Alice/Bob as the miner to mint a block and
+   update wealth balances.
+5. Inspect `/api/ledger/balance?username=alice` and the community file list to
+   see the results.
+
+Need more test accounts? Call `POST /api/register` with a new username and
+password; the backend stores the credentials and provisions the ledger identity
+automatically.
 
 ### Demo credentials and multi-user testing
 

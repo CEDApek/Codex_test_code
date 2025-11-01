@@ -38,6 +38,16 @@
       />
     </label>
 
+    <label class="category-field">
+      Category
+      <select v-model="category" :disabled="!categoryOptions.length">
+        <option v-for="option in categoryOptions" :key="option.value" :value="option.value">
+          {{ option.label }}
+        </option>
+        <option v-if="!categoryOptions.length" value="other">Other</option>
+      </select>
+    </label>
+
     <div class="size-readout" v-if="selectedFile">
       <span class="label">Calculated size</span>
       <span class="value">{{ formattedSize }}</span>
@@ -62,7 +72,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import axios from 'axios';
 
 const props = defineProps({
@@ -74,6 +84,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  categories: {
+    type: Array,
+    default: () => [],
+  },
 });
 
 const emit = defineEmits(['upload-start', 'upload-finish', 'uploaded']);
@@ -82,6 +96,7 @@ const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 const name = ref('');
 const description = ref('');
+const category = ref('other');
 const error = ref('');
 const success = ref('');
 const selectedFile = ref(null);
@@ -89,10 +104,27 @@ const fileInput = ref(null);
 const dragActive = ref(false);
 const nameManuallyEdited = ref(false);
 
+const categoryOptions = computed(() => props.categories || []);
+
 const formattedSize = computed(() => {
   if (!selectedFile.value) return 'No file selected yet';
   return humanFileSize(selectedFile.value.size);
 });
+
+watch(
+  categoryOptions,
+  (options) => {
+    if (!options.length) {
+      category.value = 'other';
+      return;
+    }
+    const found = options.find((option) => option.value === category.value);
+    if (!found) {
+      category.value = options[0].value;
+    }
+  },
+  { immediate: true }
+);
 
 function humanFileSize(bytes) {
   if (!bytes) return '0 MB';
@@ -178,6 +210,7 @@ async function submit() {
   formData.append('username', props.username);
   formData.append('name', name.value.trim());
   formData.append('description', description.value.trim());
+  formData.append('category', category.value);
 
   try {
     const response = await axios.post('/api/files', formData, {
@@ -188,6 +221,8 @@ async function submit() {
     success.value = `"${response.data.name}" is now listed for other users.`;
     name.value = '';
     description.value = '';
+    const defaultCategory = categoryOptions.value[0]?.value || 'other';
+    category.value = defaultCategory;
     selectedFile.value = null;
     nameManuallyEdited.value = false;
   } catch (err) {
@@ -354,3 +389,12 @@ button:not(:disabled):hover {
   color: #2cb67d;
 }
 </style>
+.category-field select {
+  margin-top: 0.35rem;
+  padding: 0.7rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+

@@ -1,14 +1,17 @@
 """Flask backend for Nexus-style BT resource sharing application."""
 
 import hashlib
+import io
+import mimetypes
 import os
 import re
 import sys
 import time
 import traceback
-from typing import Any, Dict, List
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file, url_for
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -45,6 +48,20 @@ USERS: Dict[str, Dict[str, str]] = {
     "alice": {"password": "alice", "role": "member"},
     "bob": {"password": "bob", "role": "member"},
 }
+
+FILE_CATEGORIES: List[Dict[str, str]] = [
+    {"value": "document", "label": "Document"},
+    {"value": "audio", "label": "Audio"},
+    {"value": "video", "label": "Video"},
+    {"value": "software", "label": "Software"},
+    {"value": "dataset", "label": "Dataset"},
+    {"value": "image", "label": "Image"},
+    {"value": "archive", "label": "Archive"},
+    {"value": "other", "label": "Other"},
+]
+
+CATEGORY_LABEL_LOOKUP = {entry["value"]: entry["label"] for entry in FILE_CATEGORIES}
+DEFAULT_CATEGORY = "other"
 
 
 def bootstrap_demo_accounts() -> None:
@@ -107,16 +124,76 @@ def clamp_upload_size(size_bytes: int) -> None:
         raise ValueError("uploaded file exceeds the 100 MB limit")
 
 
+def normalize_category(raw: str) -> str:
+    if not raw:
+        return DEFAULT_CATEGORY
+    slug = re.sub(r"[^a-z0-9]+", "_", raw.strip().lower()).strip("_")
+    if slug in CATEGORY_LABEL_LOOKUP:
+        return slug
+    if slug.endswith("s") and slug[:-1] in CATEGORY_LABEL_LOOKUP:
+        return slug[:-1]
+    return DEFAULT_CATEGORY
+
+
+def category_label(value: str) -> str:
+    normalized = normalize_category(value)
+    return CATEGORY_LABEL_LOOKUP.get(normalized, normalized.title() or "Other")
+
+
+def split_name(name: str) -> Tuple[str, str]:
+    base, ext = os.path.splitext(name or "")
+    cleaned_ext = ext[1:].lower() if ext else ""
+    return (base or name or "Unnamed"), cleaned_ext
+
+
 def serialize_shared_file(file_obj, owner_username: str) -> Dict[str, Any]:
     """Convert SharedFile objects into dictionaries for the frontend."""
+
+    name = getattr(file_obj, "name", "Unnamed")
+    base_name, derived_extension = split_name(name)
+    extension = getattr(file_obj, "extension", "") or derived_extension
+    category_value = normalize_category(getattr(file_obj, "category", DEFAULT_CATEGORY))
+    size_gb = float(getattr(file_obj, "size_gb", 0.0) or 0.0)
+    size_mb = size_gb * 1024
+    uploader = getattr(file_obj, "uploader", owner_username or "community")
+    owner = owner_username or uploader or "community"
+    file_id = getattr(file_obj, "id", None)
+    upload_time = getattr(file_obj, "upload_time", None)
+    upload_iso: Optional[str] = None
+    if upload_time:
+        upload_iso = datetime.utcfromtimestamp(upload_time).isoformat() + "Z"
+
+    download_url = None
+    if file_id is not None:
+        try:
+            download_url = url_for("api_download_file", owner=owner, file_id=file_id, _external=False)
+        except RuntimeError:
+            download_url = f"/api/files/{owner}/{file_id}/download"
+
     return {
-        "id": f"{owner_username or 'catalogue'}-{file_obj.id}",
-        "name": getattr(file_obj, "name", "Unnamed"),
+        "id": f"{owner}-{file_id}" if owner and file_id is not None else str(file_id or name),
+        "fileId": file_id,
+        "owner": owner,
+        "ownerAddress": getattr(file_obj, "owner_address", ""),
+        "uploader": uploader,
+        "fileHash": getattr(file_obj, "file_hash", ""),
+        "name": name,
+        "baseName": base_name,
+        "extension": extension,
+        "category": category_value,
+        "categoryLabel": category_label(category_value),
         "description": getattr(file_obj, "description", ""),
-        "size": format_size(getattr(file_obj, "size_gb", 0.0)),
-        "uploader": owner_username or getattr(file_obj, "uploader", "community"),
+        "size": format_size(size_gb),
+        "sizeText": format_size(size_gb),
+        "sizeGB": size_gb,
+        "sizeMB": round(size_mb, 3),
         "seeds": getattr(file_obj, "seeds", 0),
         "peers": getattr(file_obj, "peers", 0),
+        "downloadUrl": download_url,
+        "canDownload": True,
+        "hasStorage": bool(getattr(file_obj, "storage_path", "")),
+        "uploadTime": upload_time,
+        "uploadTimeIso": upload_iso,
     }
 
 
@@ -133,11 +210,26 @@ def list_catalogue() -> List[Dict[str, Any]]:
         for file_obj in user.resource_manager.get_active_files():
             results.append(serialize_shared_file(file_obj, owner_username=username))
 
+    results.sort(key=lambda item: item.get("uploadTime") or 0, reverse=True)
     return results
 
 
 def error_response(msg: str, code: int = 400):
     return jsonify({"success": False, "error": msg, "message": msg}), code
+
+
+def locate_file(owner_username: str, file_id: int):
+    normalized_owner = (owner_username or "").strip()
+    if normalized_owner == "community":
+        file_obj = system.global_resource_manager.get_file(int(file_id))
+        return file_obj, "community", None
+
+    user = system.get_user(normalized_owner)
+    if not user:
+        return None, normalized_owner, None
+
+    file_obj = user.resource_manager.get_file(int(file_id))
+    return file_obj, normalized_owner, user
 
 
 bootstrap_demo_accounts()
@@ -161,12 +253,16 @@ def api_login():
         return error_response("Invalid username or password.", 401)
 
     ledger_user = ensure_ledger_user(username)
+    wealth = system.get_user_balance(username)
 
     return jsonify({
         "token": f"demo-token-{username}",
         "username": username,
         "role": user_record.get("role", "user"),
         "ledgerIdentity": getattr(ledger_user, "address", None),
+        "wealth": wealth,
+        "pendingTransactions": len(system.blockchain.pending_transactions),
+        "categories": FILE_CATEGORIES,
     })
 
 
@@ -226,6 +322,11 @@ def api_list_files():
     return jsonify(catalogue)
 
 
+@app.route("/api/files/categories", methods=["GET"])
+def api_file_categories():
+    return jsonify(FILE_CATEGORIES)
+
+
 @app.route("/api/files", methods=["POST"])
 def api_publish_file():
     content_type = request.content_type or ""
@@ -237,6 +338,7 @@ def api_publish_file():
         username = (form.get("username") or "").strip()
         name = (form.get("name") or "").strip()
         description = (form.get("description") or "").strip()
+        category_value = normalize_category(form.get("category"))
 
         if uploaded_file is None or not uploaded_file.filename:
             return error_response("a file must be provided", 400)
@@ -265,6 +367,8 @@ def api_publish_file():
         if not name:
             name = uploaded_file.filename or safe_name
 
+        base_name, extension = split_name(uploaded_file.filename or safe_name)
+
         if not username or not name:
             return error_response("username and name are required", 400)
 
@@ -285,7 +389,8 @@ def api_publish_file():
             "seeds": 1,
             "peers": 0,
             "description": description,
-            "category": "community",
+            "category": category_value,
+            "extension": extension,
             "file_hash": file_hash,
             "storage_path": stored_path,
         }
@@ -299,6 +404,7 @@ def api_publish_file():
         name = data.get("name", "").strip()
         size_text = data.get("size", "").strip()
         description = (data.get("description") or "").strip()
+        category_value = normalize_category(data.get("category"))
 
         if not username or not name or not size_text:
             return error_response("username, name, and size are required", 400)
@@ -310,6 +416,9 @@ def api_publish_file():
         except ValueError as exc:
             return error_response(str(exc), 400)
 
+        size_text = format_size(size_gb)
+
+        base_name, extension = split_name(name)
         file_hash = hashlib.sha256(f"{username}:{name}:{time.time()}".encode()).hexdigest()[:16]
         file_payload = {
             "name": name,
@@ -318,7 +427,8 @@ def api_publish_file():
             "seeds": 1,
             "peers": 0,
             "description": description,
-            "category": "community",
+            "category": category_value,
+            "extension": extension,
             "file_hash": file_hash,
         }
 
@@ -333,23 +443,96 @@ def api_publish_file():
             created_file = file_obj
             break
 
-    if created_file is None:
+    created: Optional[Dict[str, Any]] = None
+    if created_file is not None:
+        created = serialize_shared_file(created_file, owner_username=username)
+    else:
+        for entry in list_catalogue():
+            if entry.get("fileHash") == file_payload["file_hash"]:
+                created = entry
+                break
+
+    if created is None:
+        now = time.time()
         created = {
-            "id": f"{username}-{int(time.time())}",
+            "id": f"{username}-{int(now)}",
+            "fileId": None,
+            "owner": username,
+            "ownerAddress": getattr(ledger_user, "address", ""),
+            "uploader": username,
+            "fileHash": file_payload["file_hash"],
             "name": name,
+            "baseName": base_name,
+            "extension": extension,
+            "category": category_value,
+            "categoryLabel": category_label(category_value),
             "description": description,
             "size": size_text if not is_multipart else format_size(size_gb),
-            "uploader": username,
+            "sizeText": size_text if not is_multipart else format_size(size_gb),
+            "sizeGB": size_gb,
+            "sizeMB": round(size_gb * 1024, 3),
             "seeds": 1,
             "peers": 0,
+            "downloadUrl": None,
+            "canDownload": True,
+            "hasStorage": is_multipart,
+            "uploadTime": now,
+            "uploadTimeIso": datetime.utcfromtimestamp(now).isoformat() + "Z",
         }
-    else:
-        created = serialize_shared_file(created_file, owner_username=username)
-
-    if is_multipart:
-        created["storagePath"] = stored_path
 
     return jsonify(created), 201
+
+
+@app.route("/api/files/<owner>/<int:file_id>", methods=["GET"])
+def api_file_detail(owner: str, file_id: int):
+    file_obj, normalized_owner, _ = locate_file(owner, file_id)
+    if not file_obj or not getattr(file_obj, "is_active", True):
+        return error_response("file not found", 404)
+
+    payload = serialize_shared_file(file_obj, owner_username=normalized_owner or "community")
+    return jsonify(payload)
+
+
+@app.route("/api/files/<owner>/<int:file_id>/download", methods=["GET"])
+def api_download_file(owner: str, file_id: int):
+    file_obj, normalized_owner, _ = locate_file(owner, file_id)
+    if not file_obj or not getattr(file_obj, "is_active", True):
+        return error_response("file not found", 404)
+
+    file_name = getattr(file_obj, "name", f"download-{file_id}") or f"download-{file_id}"
+    storage_path = getattr(file_obj, "storage_path", "")
+    mime_type, _ = mimetypes.guess_type(file_name)
+
+    if storage_path and os.path.isfile(storage_path):
+        absolute_path = os.path.abspath(storage_path)
+        if not absolute_path.startswith(ROOT):
+            return error_response("file storage path is invalid", 403)
+        return send_file(
+            absolute_path,
+            as_attachment=True,
+            download_name=file_name,
+            mimetype=mime_type or "application/octet-stream",
+        )
+
+    # Fallback: generate an informative payload so catalogue files can be downloaded
+    info_lines = [
+        "This is a generated copy of a catalogue resource.",
+        f"Name: {file_name}",
+        f"Category: {category_label(getattr(file_obj, 'category', DEFAULT_CATEGORY))}",
+        f"Owner: {normalized_owner or getattr(file_obj, 'uploader', 'community')}",
+        "",  # blank line
+        getattr(file_obj, "description", ""),
+    ]
+    fallback_bytes = "\n".join(line for line in info_lines if line).encode("utf-8")
+    buffer = io.BytesIO(fallback_bytes)
+    buffer.seek(0)
+
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=file_name,
+        mimetype=mime_type or "text/plain",
+    )
 
 
 @app.route("/api/register", methods=["POST"])
