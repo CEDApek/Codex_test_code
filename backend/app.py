@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 
 # Ensure project root (Nexus/) is in sys.path so "hyperledger" can be imported
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,6 +33,10 @@ CORS(app)
 
 # Single global ResourceSharingSystem instance
 system: ResourceSharingSystem = ResourceSharingSystem()
+
+UPLOAD_ROOT = os.path.join(ROOT, "backend", "uploads")
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB cap per requirements
+os.makedirs(UPLOAD_ROOT, exist_ok=True)
 
 # Demo credential store used by the Vue frontend.
 USERS: Dict[str, Dict[str, str]] = {
@@ -89,6 +94,17 @@ def parse_size_to_gb(size_text: str) -> float:
         raise ValueError(f"unsupported size unit '{unit}'")
 
     return value * multipliers[unit]
+
+
+def bytes_to_gb(size_bytes: int) -> float:
+    return size_bytes / (1024 ** 3)
+
+
+def clamp_upload_size(size_bytes: int) -> None:
+    if size_bytes <= 0:
+        raise ValueError("uploaded file is empty")
+    if size_bytes > MAX_UPLOAD_BYTES:
+        raise ValueError("uploaded file exceeds the 100 MB limit")
 
 
 def serialize_shared_file(file_obj, owner_username: str) -> Dict[str, Any]:
@@ -212,45 +228,108 @@ def api_list_files():
 
 @app.route("/api/files", methods=["POST"])
 def api_publish_file():
-    try:
-        data: Dict[str, Any] = request.get_json(force=True)
-    except Exception:
-        return error_response("invalid JSON payload", 400)
+    content_type = request.content_type or ""
+    is_multipart = "multipart/form-data" in content_type
 
-    username = data.get("username", "").strip()
-    name = data.get("name", "").strip()
-    size_text = data.get("size", "").strip()
-    description = (data.get("description") or "").strip()
+    if is_multipart:
+        form = request.form
+        uploaded_file = request.files.get("file")
+        username = (form.get("username") or "").strip()
+        name = (form.get("name") or "").strip()
+        description = (form.get("description") or "").strip()
 
-    if not username or not name or not size_text:
-        return error_response("username, name, and size are required", 400)
+        if uploaded_file is None or not uploaded_file.filename:
+            return error_response("a file must be provided", 400)
 
-    ledger_user = ensure_ledger_user(username)
+        try:
+            uploaded_file.stream.seek(0)
+            hasher = hashlib.sha256()
+            total_size = 0
+            while True:
+                chunk = uploaded_file.stream.read(8192)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                hasher.update(chunk)
+            clamp_upload_size(total_size)
+        except ValueError as exc:
+            return error_response(str(exc), 400)
+        finally:
+            uploaded_file.stream.seek(0)
 
-    try:
-        size_gb = parse_size_to_gb(size_text)
-    except ValueError as exc:
-        return error_response(str(exc), 400)
+        size_gb = bytes_to_gb(total_size)
+        size_text = format_size(size_gb)
+        file_hash = hasher.hexdigest()[:16]
 
-    file_hash = hashlib.sha256(f"{username}:{name}:{time.time()}".encode()).hexdigest()[:16]
-    file_payload = {
-        "name": name,
-        "size_gb": size_gb,
-        "uploader": username,
-        "seeds": 1,
-        "peers": 0,
-        "description": description,
-        "category": "community",
-        "file_hash": file_hash,
-    }
+        safe_name = secure_filename(uploaded_file.filename) or "uploaded.bin"
+        if not name:
+            name = uploaded_file.filename or safe_name
+
+        if not username or not name:
+            return error_response("username and name are required", 400)
+
+        ledger_user = ensure_ledger_user(username)
+
+        user_folder = os.path.join(UPLOAD_ROOT, username)
+        os.makedirs(user_folder, exist_ok=True)
+        timestamp = int(time.time())
+        filename_parts = [str(timestamp), file_hash, safe_name]
+        stored_filename = "_".join(filter(None, filename_parts))
+        stored_path = os.path.join(user_folder, stored_filename)
+        uploaded_file.save(stored_path)
+
+        file_payload = {
+            "name": name,
+            "size_gb": size_gb,
+            "uploader": username,
+            "seeds": 1,
+            "peers": 0,
+            "description": description,
+            "category": "community",
+            "file_hash": file_hash,
+            "storage_path": stored_path,
+        }
+    else:
+        try:
+            data: Dict[str, Any] = request.get_json(force=True)
+        except Exception:
+            return error_response("invalid JSON payload", 400)
+
+        username = data.get("username", "").strip()
+        name = data.get("name", "").strip()
+        size_text = data.get("size", "").strip()
+        description = (data.get("description") or "").strip()
+
+        if not username or not name or not size_text:
+            return error_response("username, name, and size are required", 400)
+
+        ledger_user = ensure_ledger_user(username)
+
+        try:
+            size_gb = parse_size_to_gb(size_text)
+        except ValueError as exc:
+            return error_response(str(exc), 400)
+
+        file_hash = hashlib.sha256(f"{username}:{name}:{time.time()}".encode()).hexdigest()[:16]
+        file_payload = {
+            "name": name,
+            "size_gb": size_gb,
+            "uploader": username,
+            "seeds": 1,
+            "peers": 0,
+            "description": description,
+            "category": "community",
+            "file_hash": file_hash,
+        }
 
     success = system.declare_user_resources(username, file_payload)
     if not success:
         return error_response("unable to publish file to ledger", 500)
 
+    ledger_user = ensure_ledger_user(username)
     created_file = None
     for file_obj in ledger_user.resource_manager.get_files_by_owner(ledger_user.address):
-        if getattr(file_obj, "file_hash", "") == file_hash:
+        if getattr(file_obj, "file_hash", "") == file_payload["file_hash"]:
             created_file = file_obj
             break
 
@@ -259,13 +338,16 @@ def api_publish_file():
             "id": f"{username}-{int(time.time())}",
             "name": name,
             "description": description,
-            "size": size_text,
+            "size": size_text if not is_multipart else format_size(size_gb),
             "uploader": username,
             "seeds": 1,
             "peers": 0,
         }
     else:
         created = serialize_shared_file(created_file, owner_username=username)
+
+    if is_multipart:
+        created["storagePath"] = stored_path
 
     return jsonify(created), 201
 
