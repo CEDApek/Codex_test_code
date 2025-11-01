@@ -47,8 +47,8 @@ flask run
 
 The API exposes:
 
-- `POST /api/login` – validates the demo `admin` / `admin` credentials and
-  returns a mock token plus the Fabric identity ID.
+- `POST /api/login` – validates demo credentials (see below) and returns a mock
+  token plus the Fabric identity ID.
 - `GET /api/ledger/balance?username=admin` – retrieves upload, download, and
   wealth metrics from the mocked ledger.
 - `POST /api/ledger/reward` – simulates a mining reward, increasing the wealth
@@ -57,6 +57,8 @@ The API exposes:
   community (seeded in memory for demo purposes).
 - `POST /api/files` – accepts a JSON payload describing a file and records it in
   the in-memory catalogue using the authenticated username as uploader.
+- `POST /api/register` – creates additional demo accounts that can log in and
+  publish resources.
 
 Under the hood the Flask routes use `hyperledger/ledger.py`. The mock ledger
 class keeps an in-memory dictionary keyed by username. When you call the reward
@@ -87,6 +89,36 @@ successful response it immediately requests the `/api/ledger/balance` endpoint
 and renders the JSON payload in the dashboard area. You can click the “Claim
 reward” button to trigger the `/api/ledger/reward` endpoint and watch the values
 update in real time.
+
+### Demo credentials and multi-user testing
+
+Three accounts are bundled so you can try different Hyperledger workflows right
+away:
+
+| Username | Password | Role          |
+|----------|----------|---------------|
+| `admin`  | `admin`  | administrator |
+| `alice`  | `alice`  | member        |
+| `bob`    | `bob`    | member        |
+
+Every time the Flask app starts it ensures these users exist inside the mocked
+ledger so you can log in as any of them without extra setup. To simulate a
+resource sharing session:
+
+1. Log in as **Alice** or **Bob** using the credentials above.
+2. Publish a file through the upload form (or `POST /api/files` with
+   `{"username": "alice", ...}`) to queue a declaration transaction.
+3. Switch accounts (e.g., log in as Bob) and trigger `POST /api/download` to
+   record a download transaction against Alice's upload.
+4. Mine the pending transactions by calling `POST /api/ledger/reward` (UI
+   button) or `POST /api/mine` with Alice/Bob as the miner to mint a block and
+   update wealth balances.
+5. Inspect `/api/ledger/balance?username=alice` and the community file list to
+   see the results.
+
+Need more test accounts? Call `POST /api/register` with a new username and
+password; the backend stores the credentials and provisions the ledger identity
+automatically.
 
 ### 3. Hyperledger integration roadmap
 

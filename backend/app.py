@@ -36,7 +36,16 @@ system: ResourceSharingSystem = ResourceSharingSystem()
 # Demo credential store used by the Vue frontend.
 USERS: Dict[str, Dict[str, str]] = {
     "admin": {"password": "admin", "role": "administrator"},
+    # Demo seed accounts so you can test uploads/downloads without registering first.
+    "alice": {"password": "alice", "role": "member"},
+    "bob": {"password": "bob", "role": "member"},
 }
+
+
+def bootstrap_demo_accounts() -> None:
+    """Ensure the built-in demo accounts exist in the ledger layer."""
+    for username in USERS:
+        ensure_ledger_user(username)
 
 
 def ensure_ledger_user(username: str):
@@ -113,6 +122,9 @@ def list_catalogue() -> List[Dict[str, Any]]:
 
 def error_response(msg: str, code: int = 400):
     return jsonify({"success": False, "error": msg, "message": msg}), code
+
+
+bootstrap_demo_accounts()
 
 
 @app.route("/api/login", methods=["POST"])
