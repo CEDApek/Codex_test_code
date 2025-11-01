@@ -1,9 +1,12 @@
 """Flask backend for Nexus-style BT resource sharing application."""
 
+import hashlib
 import os
+import re
 import sys
+import time
 import traceback
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -30,9 +33,229 @@ CORS(app)
 # Single global ResourceSharingSystem instance
 system: ResourceSharingSystem = ResourceSharingSystem()
 
+# Demo credential store used by the Vue frontend.
+USERS: Dict[str, Dict[str, str]] = {
+    "admin": {"password": "admin", "role": "administrator"},
+}
+
+
+def ensure_ledger_user(username: str):
+    """Return an existing ledger user or register a new one on demand."""
+    user = system.get_user(username)
+    if user is None:
+        user = system.register_user(username)
+    return user
+
+
+def format_size(size_gb: float) -> str:
+    """Convert a size in gigabytes into a human friendly string."""
+    if size_gb >= 1:
+        return f"{size_gb:.2f} GB"
+    size_mb = size_gb * 1024
+    if size_mb >= 1:
+        return f"{size_mb:.1f} MB"
+    size_kb = size_mb * 1024
+    return f"{size_kb:.0f} KB"
+
+
+def parse_size_to_gb(size_text: str) -> float:
+    """Parse size strings such as '42.7 MB' into gigabytes."""
+    if not size_text:
+        raise ValueError("size is required")
+
+    match = re.match(r"\s*([0-9]*\.?[0-9]+)\s*([a-zA-Z]*)\s*", size_text)
+    if not match:
+        raise ValueError("invalid size format")
+
+    value = float(match.group(1))
+    unit = match.group(2).lower() or "mb"
+    multipliers = {
+        "kb": 1 / (1024 * 1024),
+        "mb": 1 / 1024,
+        "gb": 1,
+        "tb": 1024,
+    }
+
+    if unit not in multipliers:
+        raise ValueError(f"unsupported size unit '{unit}'")
+
+    return value * multipliers[unit]
+
+
+def serialize_shared_file(file_obj, owner_username: str) -> Dict[str, Any]:
+    """Convert SharedFile objects into dictionaries for the frontend."""
+    return {
+        "id": f"{owner_username or 'catalogue'}-{file_obj.id}",
+        "name": getattr(file_obj, "name", "Unnamed"),
+        "description": getattr(file_obj, "description", ""),
+        "size": format_size(getattr(file_obj, "size_gb", 0.0)),
+        "uploader": owner_username or getattr(file_obj, "uploader", "community"),
+        "seeds": getattr(file_obj, "seeds", 0),
+        "peers": getattr(file_obj, "peers", 0),
+    }
+
+
+def list_catalogue() -> List[Dict[str, Any]]:
+    """Aggregate shared files from the global catalogue and all users."""
+    results: List[Dict[str, Any]] = []
+
+    # Include globally seeded demo files.
+    for file_obj in system.global_resource_manager.get_active_files():
+        results.append(serialize_shared_file(file_obj, owner_username="community"))
+
+    # Include every registered user's active files.
+    for username, user in system.users.items():
+        for file_obj in user.resource_manager.get_active_files():
+            results.append(serialize_shared_file(file_obj, owner_username=username))
+
+    return results
+
 
 def error_response(msg: str, code: int = 400):
-    return jsonify({"success": False, "error": msg}), code
+    return jsonify({"success": False, "error": msg, "message": msg}), code
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    try:
+        data: Dict[str, Any] = request.get_json(force=True)
+    except Exception:
+        return error_response("invalid JSON payload", 400)
+
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+
+    if not username or not password:
+        return error_response("username and password are required", 400)
+
+    user_record = USERS.get(username)
+    if not user_record or user_record.get("password") != password:
+        return error_response("Invalid username or password.", 401)
+
+    ledger_user = ensure_ledger_user(username)
+
+    return jsonify({
+        "token": f"demo-token-{username}",
+        "username": username,
+        "role": user_record.get("role", "user"),
+        "ledgerIdentity": getattr(ledger_user, "address", None),
+    })
+
+
+@app.route("/api/ledger/balance", methods=["GET"])
+def api_ledger_balance():
+    username = request.args.get("username", "").strip()
+    if not username:
+        return error_response("missing field: username", 400)
+
+    ledger_user = ensure_ledger_user(username)
+    balance = system.get_user_balance(username)
+
+    uploads = len(ledger_user.resource_manager.get_files_by_owner(ledger_user.address))
+
+    return jsonify({
+        "username": username,
+        "ledgerIdentity": getattr(ledger_user, "address", None),
+        "wealth": balance,
+        "uploads": uploads,
+        "downloads": 0,
+        "pendingTransactions": len(system.blockchain.pending_transactions),
+    })
+
+
+@app.route("/api/ledger/reward", methods=["POST"])
+def api_ledger_reward():
+    try:
+        data: Dict[str, Any] = request.get_json(force=True)
+    except Exception:
+        return error_response("invalid JSON payload", 400)
+
+    username = data.get("username", "").strip()
+    if not username:
+        return error_response("missing field: username", 400)
+
+    ensure_ledger_user(username)
+    block = system.mine_block(username)
+    if block is None:
+        return error_response("no pending transactions to mine", 400)
+
+    block_payload = block.to_dict() if hasattr(block, "to_dict") else {
+        "index": getattr(block, "index", None),
+        "timestamp": getattr(block, "timestamp", None),
+        "hash": getattr(block, "hash", None),
+    }
+
+    return jsonify({
+        "success": True,
+        "block": block_payload,
+        "wealth": system.get_user_balance(username),
+    })
+
+
+@app.route("/api/files", methods=["GET"])
+def api_list_files():
+    catalogue = list_catalogue()
+    return jsonify(catalogue)
+
+
+@app.route("/api/files", methods=["POST"])
+def api_publish_file():
+    try:
+        data: Dict[str, Any] = request.get_json(force=True)
+    except Exception:
+        return error_response("invalid JSON payload", 400)
+
+    username = data.get("username", "").strip()
+    name = data.get("name", "").strip()
+    size_text = data.get("size", "").strip()
+    description = (data.get("description") or "").strip()
+
+    if not username or not name or not size_text:
+        return error_response("username, name, and size are required", 400)
+
+    ledger_user = ensure_ledger_user(username)
+
+    try:
+        size_gb = parse_size_to_gb(size_text)
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+
+    file_hash = hashlib.sha256(f"{username}:{name}:{time.time()}".encode()).hexdigest()[:16]
+    file_payload = {
+        "name": name,
+        "size_gb": size_gb,
+        "uploader": username,
+        "seeds": 1,
+        "peers": 0,
+        "description": description,
+        "category": "community",
+        "file_hash": file_hash,
+    }
+
+    success = system.declare_user_resources(username, file_payload)
+    if not success:
+        return error_response("unable to publish file to ledger", 500)
+
+    created_file = None
+    for file_obj in ledger_user.resource_manager.get_files_by_owner(ledger_user.address):
+        if getattr(file_obj, "file_hash", "") == file_hash:
+            created_file = file_obj
+            break
+
+    if created_file is None:
+        created = {
+            "id": f"{username}-{int(time.time())}",
+            "name": name,
+            "description": description,
+            "size": size_text,
+            "uploader": username,
+            "seeds": 1,
+            "peers": 0,
+        }
+    else:
+        created = serialize_shared_file(created_file, owner_username=username)
+
+    return jsonify(created), 201
 
 
 @app.route("/api/register", methods=["POST"])
@@ -43,19 +266,27 @@ def api_register():
     """
     try:
         data: Dict[str, Any] = request.get_json(force=True)
-        username = data.get("username")
-        if not username:
-            return error_response("missing field: username", 400)
+        username = (data.get("username") or "").strip()
+        password = (data.get("password") or "").strip()
+        role = (data.get("role") or "user").strip() or "user"
+
+        if not username or not password:
+            return error_response("username and password are required", 400)
 
         if system.get_user(username):
             return error_response(f"username '{username}' already exists", 409)
 
+        if username in USERS:
+            return error_response(f"username '{username}' already exists", 409)
+
         user = system.register_user(username)
-        # register_user should return a User instance per your doc
+        USERS[username] = {"password": password, "role": role}
+
         return jsonify({
             "success": True,
             "username": username,
-            "address": getattr(user, "address", None)
+            "address": getattr(user, "address", None),
+            "role": role,
         })
     except Exception as e:  # pragma: no cover - defensive logging for dev server
         traceback.print_exc()
