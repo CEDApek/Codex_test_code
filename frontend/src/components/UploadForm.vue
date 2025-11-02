@@ -61,6 +61,11 @@
       <span class="value">{{ formattedSize }}</span>
     </div>
 
+    <div class="size-readout" v-if="selectedFile">
+      <span class="label">Calculated size</span>
+      <span class="value">{{ formattedSize }}</span>
+    </div>
+
     <label>
       Description <span class="optional">optional</span>
       <textarea
