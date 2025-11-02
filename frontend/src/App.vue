@@ -21,7 +21,21 @@
       <header class="dashboard-header">
         <div class="user-summary">
           <h2>Hello, {{ user.username }}!</h2>
-          <p class="identity">Ledger identity: {{ user.ledgerIdentity }}</p>
+          <p class="identity">
+            Ledger identity:
+            <span class="identity-value">{{ displayedIdentity }}</span>
+            <button
+              type="button"
+              class="identity-toggle"
+              :aria-pressed="identityVisible"
+              @click="toggleIdentityVisibility"
+            >
+              <span class="sr-only">
+                {{ identityVisible ? 'Hide identity' : 'Show identity' }}
+              </span>
+              <span aria-hidden="true">{{ identityVisible ? '👁️' : '👁️‍🗨️' }}</span>
+            </button>
+          </p>
           <p class="role">Role: {{ user.role }}</p>
         </div>
         <button type="button" class="logout-button" @click="logout">Log out</button>
@@ -90,6 +104,13 @@
         >
           Upload a file
         </button>
+        <button
+          type="button"
+          :class="{ active: activeTab === 'blocks' }"
+          @click="switchTab('blocks')"
+        >
+          Mined blocks
+        </button>
       </nav>
 
       <section v-if="activeTab === 'files'" class="dashboard-panel">
@@ -116,7 +137,7 @@
         />
       </section>
 
-      <section v-else class="dashboard-panel">
+      <section v-else-if="activeTab === 'upload'" class="dashboard-panel">
         <UploadForm
           :username="user.username"
           :busy="uploading"
@@ -127,29 +148,17 @@
         />
       </section>
 
-      <section v-if="minedBlocks.length" class="mined-history">
-        <h4>Recent mining activity</h4>
-        <ul>
-          <li v-for="block in minedBlocks" :key="block.key">
-            <span class="block-index">Block #{{ block.index }}</span>
-            <span class="block-hash">{{ block.hash }}</span>
-            <span class="block-time">{{ block.time }}</span>
-          </li>
-        </ul>
+      <section v-else class="dashboard-panel">
+        <MinedBlocks
+          :blocks="blocks"
+          :loading="blocksLoading"
+          :error="blocksError"
+          :is-admin="isAdmin"
+          :filters="blockFilters"
+          @search="handleBlockSearch"
+          @refresh="refreshBlocks"
+        />
       </section>
-    </section>
-
-    <section v-if="user" class="post-login">
-      <h2>Welcome back, {{ user.username }}!</h2>
-      <p>Your ledger identity: <strong>{{ user.ledgerIdentity }}</strong></p>
-      <article class="next-steps">
-        <h3>Next steps</h3>
-        <ol>
-          <li>Use the community tab to search and filter shared files.</li>
-          <li>Upload your own files with categories so others can discover them faster.</li>
-          <li>Mine pending transactions to confirm rewards and watch balances update.</li>
-        </ol>
-      </article>
     </section>
   </main>
 </template>
@@ -161,6 +170,7 @@ import LoginForm from './components/LoginForm.vue';
 import FileList from './components/FileList.vue';
 import UploadForm from './components/UploadForm.vue';
 import FileDetail from './components/FileDetail.vue';
+import MinedBlocks from './components/MinedBlocks.vue';
 
 const user = ref(null);
 const categories = ref([]);
@@ -175,7 +185,8 @@ const wealthError = ref('');
 const mining = ref(false);
 const miningOverlay = ref(false);
 const miningError = ref('');
-const minedBlocks = ref([]);
+
+const identityVisible = ref(true);
 
 const MINING_SIM_BASE = 3000;
 const MINING_SIM_VARIANCE = 2000;
@@ -184,6 +195,11 @@ const knownAccounts = ref(['admin', 'alice', 'bob']);
 const wealthBoard = ref([]);
 const wealthBoardError = ref('');
 const wealthBoardLoading = ref(false);
+
+const blocks = ref([]);
+const blocksLoading = ref(false);
+const blocksError = ref('');
+const blockFilters = ref(defaultBlockFilters());
 
 const selectedFile = ref(null);
 const selectedFileDetail = ref(null);
@@ -198,6 +214,12 @@ onMounted(() => {
 });
 
 const isAdmin = computed(() => user.value?.role === 'administrator');
+const displayedIdentity = computed(() => {
+  if (!user.value?.ledgerIdentity) {
+    return '—';
+  }
+  return identityVisible.value ? user.value.ledgerIdentity : '***';
+});
 
 const wealthDisplay = computed(() => {
   if (!wealth.value || wealth.value.wealth === undefined) {
@@ -207,6 +229,10 @@ const wealthDisplay = computed(() => {
 });
 
 const detailData = computed(() => selectedFileDetail.value || selectedFile.value);
+
+function defaultBlockFilters() {
+  return { search: '', block: '', miner: '' };
+}
 
 function formatCredits(value) {
   if (value === undefined || value === null || Number.isNaN(Number(value))) {
@@ -238,15 +264,22 @@ function ensureKnownAccount(account) {
   }
 }
 
+function toggleIdentityVisibility() {
+  identityVisible.value = !identityVisible.value;
+}
+
 function handleLoggedIn(payload) {
   user.value = payload;
+  identityVisible.value = true;
   if (payload.categories) {
     categories.value = payload.categories;
   }
   ensureKnownAccount(payload.username);
+  blockFilters.value = defaultBlockFilters();
   activeTab.value = 'upload';
   fetchFiles();
   refreshWealth();
+  fetchBlocks();
 }
 
 async function fetchFiles() {
@@ -264,6 +297,53 @@ async function fetchFiles() {
   }
 }
 
+async function fetchBlocks(filters = blockFilters.value) {
+  if (!user.value) {
+    blocks.value = [];
+    blocksError.value = '';
+    blocksLoading.value = false;
+    return;
+  }
+
+  const nextFilters = {
+    ...defaultBlockFilters(),
+    ...(filters || {}),
+  };
+  blockFilters.value = nextFilters;
+
+  blocksLoading.value = true;
+  blocksError.value = '';
+  try {
+    const params = {
+      viewer: user.value.username,
+    };
+    if (nextFilters.search) {
+      params.search = nextFilters.search;
+    }
+    if (nextFilters.block) {
+      params.block = nextFilters.block;
+    }
+    if (nextFilters.miner && isAdmin.value) {
+      params.miner = nextFilters.miner;
+    }
+    const response = await axios.get('/api/blocks', { params });
+    blocks.value = response.data?.blocks ?? [];
+  } catch (error) {
+    blocksError.value =
+      error.response?.data?.message || 'Unable to load block history right now.';
+  } finally {
+    blocksLoading.value = false;
+  }
+}
+
+function handleBlockSearch(filters) {
+  fetchBlocks(filters);
+}
+
+function refreshBlocks() {
+  fetchBlocks(blockFilters.value);
+}
+
 async function refreshWealth() {
   if (!user.value) return;
   wealthError.value = '';
@@ -272,6 +352,9 @@ async function refreshWealth() {
       params: { username: user.value.username, viewer: user.value.username },
     });
     wealth.value = response.data;
+    if (response.data?.ledgerIdentity) {
+      Object.assign(user.value, { ledgerIdentity: response.data.ledgerIdentity });
+    }
   } catch (error) {
     wealthError.value =
       error.response?.data?.message || 'Unable to load your wealth information.';
@@ -346,6 +429,10 @@ function switchTab(tab) {
   if (tab === 'upload') {
     closeFileDetails();
   }
+  if (tab === 'blocks') {
+    closeFileDetails();
+    fetchBlocks(blockFilters.value);
+  }
 }
 
 function closeFileDetails() {
@@ -412,6 +499,7 @@ async function downloadFile(file) {
     window.URL.revokeObjectURL(url);
     await refreshWealth();
     await fetchFiles();
+    await fetchBlocks(blockFilters.value);
     if (selectedFile.value?.fileId === file.fileId) {
       const updated = files.value.find(
         (entry) => entry.fileId === file.fileId && entry.owner === file.owner
@@ -440,20 +528,11 @@ async function minePending() {
     const simulatedDelay =
       MINING_SIM_BASE + Math.floor(Math.random() * MINING_SIM_VARIANCE);
     const delayPromise = delay(simulatedDelay);
-    let response;
     try {
-      response = await requestPromise;
+      await requestPromise;
     } finally {
       await delayPromise;
     }
-    const block = response.data?.block || {};
-    const entry = {
-      index: block.index ?? minedBlocks.value.length + 1,
-      hash: block.hash ? String(block.hash).slice(0, 18) : 'pending…',
-      time: new Date().toLocaleTimeString(),
-      key: `${Date.now()}-${Math.random()}`,
-    };
-    minedBlocks.value = [entry, ...minedBlocks.value].slice(0, 6);
   } catch (error) {
     miningError.value =
       error.response?.data?.message || 'No pending transactions to mine right now.';
@@ -462,6 +541,7 @@ async function minePending() {
     miningOverlay.value = false;
     await refreshWealth();
     await fetchFiles();
+    await fetchBlocks(blockFilters.value);
   }
 }
 
@@ -472,11 +552,15 @@ function logout() {
   knownAccounts.value = ['admin', 'alice', 'bob'];
   wealthBoard.value = [];
   wealthBoardError.value = '';
-  minedBlocks.value = [];
+  blocks.value = [];
+  blocksError.value = '';
+  blocksLoading.value = false;
+  blockFilters.value = defaultBlockFilters();
   selectedFile.value = null;
   selectedFileDetail.value = null;
   detailError.value = '';
   downloadError.value = '';
+  identityVisible.value = true;
   activeTab.value = 'files';
 }
 </script>
@@ -530,6 +614,49 @@ function logout() {
 .identity {
   margin: 0.35rem 0 0;
   color: #c1c1c1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.identity-value {
+  font-family: 'Fira Code', 'Courier New', monospace;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  letter-spacing: 0.05em;
+}
+
+.identity-toggle {
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f5f5f5;
+  border-radius: 999px;
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.identity-toggle:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .role {
@@ -753,61 +880,6 @@ function logout() {
   border-radius: 16px;
   padding: 1.5rem;
   border: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.mined-history {
-  background: rgba(0, 0, 0, 0.22);
-  border-radius: 16px;
-  padding: 1.25rem 1.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  display: grid;
-  gap: 0.75rem;
-}
-
-.mined-history h4 {
-  margin: 0;
-}
-
-.mined-history ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 0.5rem;
-}
-
-.mined-history li {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  font-size: 0.9rem;
-}
-
-.block-index {
-  font-weight: 600;
-}
-
-.block-hash {
-  font-family: 'Fira Code', 'Courier New', monospace;
-  color: #9ddcff;
-}
-
-.block-time {
-  color: #c5c5c5;
-}
-
-.post-login {
-  background: rgba(0, 0, 0, 0.28);
-  border-radius: 16px;
-  padding: 1.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  display: grid;
-  gap: 1rem;
-}
-
-.next-steps ol {
-  margin: 0;
-  padding-left: 1.25rem;
 }
 
 @media (max-width: 720px) {

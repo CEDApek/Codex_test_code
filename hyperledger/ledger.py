@@ -2,7 +2,7 @@ import hashlib
 import json
 import time
 from datetime import datetime
-from typing import List, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 import threading
 from collections import defaultdict
 from dataclasses import dataclass
@@ -423,28 +423,29 @@ class Blockchain:
 # 修改User类，集成ResourceManager
 class User:
     """用户类"""
-    def __init__(self, username: str, blockchain: Blockchain):
+    def __init__(self, username: str, blockchain: Blockchain, initial_credit: float = 10000.0):
         self.username = username
         self.address = hashlib.sha256(f"{username}{time.time()}".encode()).hexdigest()[:16]
         self.blockchain = blockchain
         self.resource_manager = ResourceManager()  # 每个用户有自己的资源管理器
-        self.initial_credit = 10000.0
-        
+        self.initial_credit = float(initial_credit)
+
         print(f"创建用户 {username}, 地址: {self.address}")
-        
-        # 初始信用交易
-        initial_transaction = Transaction(
-            sender="0",
-            receiver=self.address,
-            amount=self.initial_credit,
-            transaction_type="initial_credit"
-        )
-        
-        success = self.blockchain.add_transaction(initial_transaction)
-        if success:
-            print(f"用户 {username} 初始信用 {self.initial_credit} 已添加到待处理交易")
-        else:
-            print(f"用户 {username} 初始信用添加失败")
+
+        if self.initial_credit > 0:
+            # 初始信用交易
+            initial_transaction = Transaction(
+                sender="0",
+                receiver=self.address,
+                amount=self.initial_credit,
+                transaction_type="initial_credit"
+            )
+
+            success = self.blockchain.add_transaction(initial_transaction)
+            if success:
+                print(f"用户 {username} 初始信用 {self.initial_credit} 已添加到待处理交易")
+            else:
+                print(f"用户 {username} 初始信用添加失败")
     
     def declare_resources(self, file_data: Dict) -> bool:
         """声明资源（上传文件）"""
@@ -571,19 +572,62 @@ class ResourceSharingSystem:
     def __init__(self):
         self.blockchain = Blockchain()
         self.users: Dict[str, User] = {}
+        self.address_book: Dict[str, str] = {}
         self.global_resource_manager = ResourceManager()  # 全局资源管理器
         print("资源共享系统初始化完成")
-    
-    def register_user(self, username: str) -> User:
+
+    def register_user(self, username: str, initial_credit: float = 10000.0) -> User:
         if username in self.users:
             raise ValueError(f"用户名 {username} 已存在")
-        
-        user = User(username, self.blockchain)
+
+        user = User(username, self.blockchain, initial_credit=initial_credit)
         self.users[username] = user
+        self.address_book[user.address] = username
         return user
-    
+
     def get_user(self, username: str) -> Optional[User]:
         return self.users.get(username)
+
+    def get_username_by_address(self, address: str) -> Optional[str]:
+        return self.address_book.get(address)
+
+    def register_address(self, username: str, address: str) -> None:
+        if address:
+            self.address_book[address] = username
+
+    def list_blocks(self) -> List[Dict[str, Any]]:
+        blocks: List[Dict[str, Any]] = []
+        for block in self.blockchain.chain:
+            miner_address = None
+            miner_username = None
+            for transaction in getattr(block, "transactions", []):
+                tx_type = getattr(transaction, "transaction_type", "")
+                if tx_type == "mining_reward":
+                    miner_address = getattr(transaction, "receiver", None)
+                    miner_username = self.get_username_by_address(miner_address)
+                    break
+
+            blocks.append(
+                {
+                    "index": getattr(block, "index", None),
+                    "hash": getattr(block, "hash", None),
+                    "previous_hash": getattr(block, "previous_hash", None),
+                    "timestamp": getattr(block, "timestamp", None),
+                    "miner_address": miner_address,
+                    "miner": miner_username,
+                    "transactions": [
+                        tx.to_dict() if hasattr(tx, "to_dict") else {
+                            "sender": getattr(tx, "sender", None),
+                            "receiver": getattr(tx, "receiver", None),
+                            "amount": getattr(tx, "amount", None),
+                            "transaction_type": getattr(tx, "transaction_type", None),
+                        }
+                        for tx in getattr(block, "transactions", [])
+                    ],
+                }
+            )
+
+        return blocks
     
     def declare_user_resources(self, username: str, file_data: Dict) -> bool:
         """用户声明资源"""

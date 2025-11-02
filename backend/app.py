@@ -84,6 +84,7 @@ def ensure_ledger_user(username: str):
     user = system.get_user(username)
     if user is None:
         user = system.register_user(username)
+    system.register_address(username, getattr(user, "address", None))
     return user
 
 
@@ -200,6 +201,73 @@ def find_name_conflict(username: str, base_name: str):
         if existing_base.strip().lower() == target:
             return file_obj, owner
     return None, None
+
+
+def normalize_block_payload(block_entry: Dict[str, Any]) -> Dict[str, Any]:
+    timestamp = block_entry.get("timestamp")
+    dt: Optional[datetime] = None
+    iso = None
+    date_label = None
+    time_label = None
+    if isinstance(timestamp, (int, float)):
+        dt = datetime.fromtimestamp(timestamp)
+        iso = dt.isoformat()
+        date_label = dt.strftime("%Y-%m-%d")
+        time_label = dt.strftime("%H:%M:%S")
+
+    miner = block_entry.get("miner")
+    if not miner and block_entry.get("miner_address"):
+        miner = system.get_username_by_address(block_entry.get("miner_address"))
+    if block_entry.get("index") == 0 and not miner:
+        miner = "system"
+
+    return {
+        "index": block_entry.get("index"),
+        "hash": block_entry.get("hash"),
+        "previousHash": block_entry.get("previous_hash"),
+        "timestamp": timestamp,
+        "iso": iso,
+        "date": date_label,
+        "time": time_label,
+        "miner": miner,
+        "minerAddress": block_entry.get("miner_address"),
+        "transactionCount": len(block_entry.get("transactions") or []),
+    }
+
+
+def list_blocks_for_viewer(viewer: str, search: str = "", block_filter: Optional[int] = None, miner_filter: str = ""):
+    is_admin = is_administrator(viewer)
+    normalized_search = (search or "").strip().lower()
+    normalized_miner = (miner_filter or "").strip().lower()
+
+    payloads: List[Dict[str, Any]] = []
+    for entry in system.list_blocks():
+        normalized_entry = normalize_block_payload(entry)
+
+        if not is_admin and normalized_entry.get("miner") != viewer:
+            continue
+
+        if block_filter is not None and normalized_entry.get("index") != block_filter:
+            continue
+
+        if normalized_miner and normalized_entry.get("miner", "").lower() != normalized_miner:
+            continue
+
+        if normalized_search:
+            haystack = " ".join(
+                [
+                    str(normalized_entry.get("index", "")),
+                    normalized_entry.get("miner") or "",
+                    normalized_entry.get("hash") or "",
+                ]
+            ).lower()
+            if normalized_search not in haystack:
+                continue
+
+        payloads.append(normalized_entry)
+
+    payloads.sort(key=lambda item: item.get("index", -1), reverse=True)
+    return payloads
 
 
 def find_content_conflict(username: str, content_hash: str, short_hash: str):
@@ -417,17 +485,63 @@ def api_ledger_reward():
     if block is None:
         return error_response("no pending transactions to mine", 400)
 
-    block_payload = block.to_dict() if hasattr(block, "to_dict") else {
-        "index": getattr(block, "index", None),
-        "timestamp": getattr(block, "timestamp", None),
-        "hash": getattr(block, "hash", None),
-    }
+    block_lookup = next(
+        (entry for entry in system.list_blocks() if entry.get("index") == getattr(block, "index", None)),
+        None,
+    )
+    if not block_lookup:
+        miner_address = None
+        for tx in getattr(block, "transactions", []):
+            if getattr(tx, "transaction_type", "") == "mining_reward":
+                miner_address = getattr(tx, "receiver", None)
+                break
+        block_lookup = {
+            "index": getattr(block, "index", None),
+            "hash": getattr(block, "hash", None),
+            "previous_hash": getattr(block, "previous_hash", None),
+            "timestamp": getattr(block, "timestamp", None),
+            "miner_address": miner_address,
+            "transactions": [
+                tx.to_dict() if hasattr(tx, "to_dict") else {
+                    "sender": getattr(tx, "sender", None),
+                    "receiver": getattr(tx, "receiver", None),
+                    "amount": getattr(tx, "amount", None),
+                    "transaction_type": getattr(tx, "transaction_type", None),
+                }
+                for tx in getattr(block, "transactions", [])
+            ],
+        }
+    block_payload = normalize_block_payload(block_lookup or {})
 
     return jsonify({
         "success": True,
         "block": block_payload,
         "wealth": system.get_user_balance(username),
     })
+
+
+@app.route("/api/blocks", methods=["GET"])
+def api_blocks() -> Any:
+    viewer = request.args.get("viewer", "").strip()
+    if not viewer:
+        return error_response("missing field: viewer", 400)
+
+    if viewer not in USERS:
+        return error_response("viewer is not recognized", 403)
+
+    search = request.args.get("search", "")
+    block_param = request.args.get("block", "").strip()
+    miner_param = request.args.get("miner", "").strip()
+
+    block_filter: Optional[int] = None
+    if block_param:
+        try:
+            block_filter = int(block_param)
+        except ValueError:
+            return error_response("block must be an integer", 400)
+
+    payloads = list_blocks_for_viewer(viewer, search, block_filter, miner_param)
+    return jsonify({"blocks": payloads, "count": len(payloads)})
 
 
 @app.route("/api/files", methods=["GET"])
@@ -724,7 +838,7 @@ def api_register():
         data: Dict[str, Any] = request.get_json(force=True)
         username = (data.get("username") or "").strip()
         password = (data.get("password") or "").strip()
-        role = (data.get("role") or "user").strip() or "user"
+        role = (data.get("role") or "member").strip() or "member"
 
         if not username or not password:
             return error_response("username and password are required", 400)
@@ -735,7 +849,8 @@ def api_register():
         if username in USERS:
             return error_response(f"username '{username}' already exists", 409)
 
-        user = system.register_user(username)
+        user = system.register_user(username, initial_credit=0.0)
+        system.register_address(username, getattr(user, "address", None))
         USERS[username] = {"password": password, "role": role}
 
         return jsonify({
@@ -743,6 +858,7 @@ def api_register():
             "username": username,
             "address": getattr(user, "address", None),
             "role": role,
+            "initialWealth": system.get_user_balance(username),
         })
     except Exception as e:  # pragma: no cover - defensive logging for dev server
         traceback.print_exc()

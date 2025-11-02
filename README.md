@@ -67,7 +67,10 @@ The API exposes:
   100&nbsp;MB limit, stores uploaded binaries on disk, and records the file on the
   ledger with size, hash, and category metadata.
 - `POST /api/register` – creates additional demo accounts that can log in and
-  publish resources.
+  publish resources starting with a zero balance.
+- `GET /api/blocks` – returns mined block metadata. Administrators can search
+  the full chain by block number, hash fragment, or miner; non-admins only
+  receive the blocks they personally mined.
 
 Under the hood the Flask routes use `hyperledger/ledger.py`. The mock ledger
 class keeps an in-memory dictionary keyed by username. When you call the reward
@@ -93,13 +96,18 @@ logging in the dashboard now provides:
 2. **Upload a file** – a drag-and-drop form that calculates the size
    automatically, enforces the 0–100&nbsp;MB limit, and captures a category so the
    ledger can classify the resource.
+3. **Mined blocks** – a searchable ledger view. Administrators can browse the
+   entire chain, filter by block number, miner, or hash fragment, and export the
+   metadata for reports. Non-admins see only the blocks they mined personally,
+   making it easy to track rewards without exposing other members’ activity.
 
-In addition to the file tools, the top of the dashboard shows your current
-wealth, pending transaction count, a quick mining button, and an account wealth
-board that tracks the seeded demo users (`admin`, `alice`, `bob`) alongside the
-logged-in account. Every mining run is recorded in a short activity feed so you
-can copy block hashes for lab notes. Mining now plays a themed loading scene for
-roughly 3–5 seconds so you can document the confirmation window during tests.
+In addition to the section tabs, the header shows your current wealth, pending
+transactions, and a privacy toggle that masks your ledger identity behind an
+eye icon whenever you are presenting. Administrators can also refresh a wealth
+board that compares the seeded demo users (`admin`, `alice`, `bob`) with any new
+accounts you register, while members see a reminder that cross-account balances
+are private. Mining still runs through the themed 3–5 second overlay so you can
+capture the simulated confirmation window for lab notes.
 
 ### Platform rules and behaviours
 
@@ -121,6 +129,13 @@ roughly 3–5 seconds so you can document the confirmation window during tests.
 - **Wealth visibility** – only the administrator account can query other
   members’ balances. Non-admins see a reminder instead of the wealth board, but
   everyone can view their own credits and pending transactions.
+- **Block visibility** – administrators can browse the entire chain, search by
+  block number or miner, and export metadata from the new Mined Blocks tab.
+  Members only see the blocks they mined personally so individual rewards stay
+  private.
+- **Identity privacy** – the dashboard exposes an eye icon that lets you mask
+  your ledger identity (`***`) during demos without affecting the underlying
+  address stored in the ledger.
 - **Mining workflow** – use the “Mine pending transactions” button to commit
   rewards. The simulated delay ensures your screenshots capture a consistent
   mining experience while the backend actually processes the block.
@@ -151,9 +166,10 @@ resource sharing session:
 5. Inspect `/api/ledger/balance?username=alice` and the community file list to
    see the results.
 
-Need more test accounts? Call `POST /api/register` with a new username and
-password; the backend stores the credentials and provisions the ledger identity
-automatically.
+Need more test accounts? Use the “Register for free” link on the login screen or
+call `POST /api/register` with a new username and password. Fresh accounts start
+with a zero balance but have their ledger identity provisioned immediately so
+you can log in again later without re-registering.
 
 ### 3. Hyperledger integration roadmap
 

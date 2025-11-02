@@ -85,6 +85,15 @@
         </div>
       </div>
     </transition>
+
+    <section class="upload-notes">
+      <h4>Workflow tips</h4>
+      <ol>
+        <li>Browse the community tab to filter, search, and preview shared files.</li>
+        <li>Upload new resources with clear descriptions so duplicate checks pass quickly.</li>
+        <li>Mine pending transactions once uploads or downloads finish to update balances.</li>
+      </ol>
+    </section>
   </form>
 </template>
 
@@ -558,6 +567,28 @@ button:not(:disabled):hover {
   border-color: rgba(44, 182, 125, 0.8);
   background: linear-gradient(135deg, rgba(44, 182, 125, 0.25), rgba(127, 90, 240, 0.3));
   box-shadow: 0 10px 26px rgba(44, 182, 125, 0.3);
+}
+
+.upload-notes {
+  margin: 0;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: grid;
+  gap: 0.65rem;
+}
+
+.upload-notes h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.upload-notes ol {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: #cfcfcf;
+  line-height: 1.6;
 }
 </style>
 

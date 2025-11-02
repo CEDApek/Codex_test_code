@@ -105,39 +105,41 @@
         No files match the current search or filters. Try adjusting the criteria or upload
         something awesome to get started!
       </p>
-      <table v-else class="files-table">
-        <thead>
-          <tr>
-            <th scope="col">File</th>
-            <th scope="col">Size</th>
-            <th scope="col">Category</th>
-            <th scope="col">Uploader</th>
-            <th scope="col">Seeds</th>
-            <th scope="col">Peers</th>
-            <th scope="col" class="actions-col">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="file in filteredFiles" :key="file.id">
-            <td>
-              <button type="button" class="file-link" @click="viewDetails(file)">
-                {{ file.name }}
-              </button>
-              <p v-if="file.description" class="description">{{ file.description }}</p>
-            </td>
-            <td>{{ file.size }}</td>
-            <td>{{ file.categoryLabel }}</td>
-            <td>{{ file.uploader }}</td>
-            <td>{{ file.seeds }}</td>
-            <td>{{ file.peers }}</td>
-            <td class="row-actions">
-              <button type="button" class="secondary" @click="download(file)">
-                Download
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div v-else class="table-scroll">
+        <table class="files-table">
+          <thead>
+            <tr>
+              <th scope="col">File</th>
+              <th scope="col">Size</th>
+              <th scope="col">Category</th>
+              <th scope="col">Uploader</th>
+              <th scope="col">Seeds</th>
+              <th scope="col">Peers</th>
+              <th scope="col" class="actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="file in filteredFiles" :key="file.id">
+              <td>
+                <button type="button" class="file-link" @click="viewDetails(file)">
+                  {{ file.name }}
+                </button>
+                <p v-if="file.description" class="description">{{ file.description }}</p>
+              </td>
+              <td>{{ file.size }}</td>
+              <td>{{ file.categoryLabel }}</td>
+              <td>{{ file.uploader }}</td>
+              <td>{{ file.seeds }}</td>
+              <td>{{ file.peers }}</td>
+              <td class="row-actions">
+                <button type="button" class="secondary" @click="download(file)">
+                  Download
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </template>
   </div>
 </template>
@@ -433,12 +435,17 @@ function download(file) {
   font-style: italic;
 }
 
+.table-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 .files-table {
   width: 100%;
   border-collapse: collapse;
   background: rgba(0, 0, 0, 0.2);
-  border-radius: 16px;
-  overflow: hidden;
 }
 
 th,
@@ -485,6 +492,23 @@ tbody tr + tr {
   margin: 0.25rem 0 0;
   color: #bcbcbc;
   font-size: 0.85rem;
+  max-height: 4.5rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.row-actions {
+  text-align: right;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
 .row-actions {

@@ -162,6 +162,9 @@ function emitDownload() {
   margin: 0;
   color: #d7d7d7;
   line-height: 1.7;
+  max-height: 9rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
 }
 
 .actions {
