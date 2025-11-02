@@ -19,9 +19,12 @@ class SharedFile:
     description: str
     owner_address: str  # 所有者区块链地址
     file_hash: str = ""  # 文件哈希，用于验证文件完整性
+    content_hash: str = ""  # 完整内容哈希用于查重
     category: str = "general"  # 文件分类
+    extension: str = ""  # 文件扩展名
     upload_time: float = None  # 上传时间戳
     is_active: bool = True  # 是否活跃可用
+    storage_path: str = ""  # 后端保存的文件路径（可选）
     
     def __post_init__(self):
         if self.upload_time is None:
@@ -39,9 +42,12 @@ class SharedFile:
             'description': self.description,
             'owner_address': self.owner_address,
             'file_hash': self.file_hash,
+            'content_hash': self.content_hash,
             'category': self.category,
+            'extension': self.extension,
             'upload_time': self.upload_time,
-            'is_active': self.is_active
+            'is_active': self.is_active,
+            'storage_path': self.storage_path,
         }
     
     @classmethod
@@ -71,7 +77,8 @@ class ResourceManager:
                 peers=5,
                 description="Illustrated guide to earning wealth rewards efficiently.",
                 owner_address="",
-                category="document"
+                category="document",
+                extension="pdf"
             ),
             SharedFile(
                 id=self._get_next_id(),
@@ -82,7 +89,8 @@ class ResourceManager:
                 peers=12,
                 description="Synthwave soundtrack to keep your node online.",
                 owner_address="",
-                category="audio"
+                category="audio",
+                extension="mp3"
             ),
             SharedFile(
                 id=self._get_next_id(),
@@ -93,7 +101,8 @@ class ResourceManager:
                 peers=4,
                 description="Automation scripts to bootstrap a new seeding rig.",
                 owner_address="",
-                category="software"
+                category="software",
+                extension="zip"
             )
         ]
         
@@ -510,9 +519,23 @@ class User:
             print("资源下载交易添加成功")
             # 更新种子数（下载者成为新的种子）
             self.resource_manager.update_seeds_peers(file_id, seeds_delta=1)
+            # 系统额外奖励所有者少量货币
+            bonus_amount = max(file.size_gb * 100, 1.0)
+            bonus_transaction = Transaction(
+                sender="0",
+                receiver=file.owner_address,
+                amount=bonus_amount,
+                transaction_type="download_bonus",
+                resource_data={
+                    'file_id': file.id,
+                    'name': file.name,
+                    'uploader': file.uploader,
+                }
+            )
+            self.blockchain.add_transaction(bonus_transaction)
         else:
             print("资源下载交易添加失败")
-        
+
         return success
     
     # 资源管理接口
