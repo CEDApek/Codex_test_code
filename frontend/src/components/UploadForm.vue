@@ -61,11 +61,6 @@
       <span class="value">{{ formattedSize }}</span>
     </div>
 
-    <div class="size-readout" v-if="selectedFile">
-      <span class="label">Calculated size</span>
-      <span class="value">{{ formattedSize }}</span>
-    </div>
-
     <label>
       Description <span class="optional">optional</span>
       <textarea
@@ -75,12 +70,21 @@
       ></textarea>
     </label>
 
-    <button type="submit" :disabled="busy">
+    <button type="submit" :disabled="busy || isValidating">
       {{ busy ? 'Uploading…' : 'Upload and publish' }}
     </button>
 
     <p v-if="error" class="feedback error">{{ error }}</p>
     <p v-else-if="success" class="feedback success">{{ success }}</p>
+
+    <transition name="fade">
+      <div v-if="isValidating" class="validation-overlay" role="status" aria-live="polite">
+        <div class="overlay-card">
+          <span class="spinner" aria-hidden="true"></span>
+          <p>{{ validationMessage }}</p>
+        </div>
+      </div>
+    </transition>
   </form>
 </template>
 
@@ -116,12 +120,26 @@ const selectedFile = ref(null);
 const fileInput = ref(null);
 const dragActive = ref(false);
 const nameManuallyEdited = ref(false);
+const validationStage = ref('idle');
 
 const categoryOptions = computed(() => {
   if (Array.isArray(props.categories) && props.categories.length) {
     return props.categories;
   }
   return [{ value: 'other', label: 'Other' }];
+});
+
+const isValidating = computed(() => validationStage.value !== 'idle');
+
+const validationMessage = computed(() => {
+  switch (validationStage.value) {
+    case 'checking-name':
+      return 'Checking for duplicate names in the community…';
+    case 'validating':
+      return 'Validating file contents for originality…';
+    default:
+      return '';
+  }
 });
 
 const formattedSize = computed(() => {
@@ -225,6 +243,28 @@ async function submit() {
 
   error.value = '';
   success.value = '';
+  validationStage.value = 'checking-name';
+
+  try {
+    const nameCheck = await axios.get('/api/files/validate-name', {
+      params: { username: props.username, name: name.value.trim() },
+    });
+    if (nameCheck.data?.conflict) {
+      validationStage.value = 'idle';
+      const conflictName = nameCheck.data?.conflictFile?.name || name.value.trim();
+      const conflictOwner = nameCheck.data?.conflictOwner
+        ? ` (uploaded by ${nameCheck.data.conflictOwner})`
+        : '';
+      error.value = `A file named "${conflictName}" already exists in the community${conflictOwner}.`;
+      return;
+    }
+  } catch (err) {
+    validationStage.value = 'idle';
+    error.value = err.response?.data?.message || 'Unable to validate the file name right now.';
+    return;
+  }
+
+  validationStage.value = 'validating';
   emit('upload-start');
 
   const formData = new FormData();
@@ -251,6 +291,7 @@ async function submit() {
     error.value = err.response?.data?.message || 'Unable to publish the file right now.';
   } finally {
     emit('upload-finish');
+    validationStage.value = 'idle';
   }
 }
 </script>
@@ -396,6 +437,60 @@ button:disabled {
 button:not(:disabled):hover {
   transform: translateY(-1px);
   box-shadow: 0 10px 30px rgba(127, 90, 240, 0.35);
+}
+
+.validation-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 15, 15, 0.75);
+  display: grid;
+  place-items: center;
+  z-index: 20;
+}
+
+.overlay-card {
+  background: rgba(18, 18, 26, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 1.5rem 2rem;
+  display: grid;
+  gap: 0.75rem;
+  text-align: center;
+  max-width: 320px;
+}
+
+.overlay-card p {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid rgba(127, 90, 240, 0.25);
+  border-top-color: #7f5af0;
+  animation: spin 0.9s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
 .feedback {

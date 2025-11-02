@@ -364,12 +364,17 @@ async function downloadFile(file) {
     downloadError.value = 'This file is not yet ready for download.';
     return;
   }
+  if (!user.value) {
+    downloadError.value = 'Please sign in before downloading files.';
+    return;
+  }
   downloading.value = true;
   downloadError.value = '';
   try {
     const owner = encodeURIComponent(file.owner || 'community');
     const response = await axios.get(`/api/files/${owner}/${file.fileId}/download`, {
       responseType: 'blob',
+      params: { downloader: user.value.username },
     });
 
     const blob = new Blob([response.data], {
@@ -387,6 +392,16 @@ async function downloadFile(file) {
     anchor.click();
     document.body.removeChild(anchor);
     window.URL.revokeObjectURL(url);
+    await refreshWealth();
+    await fetchFiles();
+    if (selectedFile.value?.fileId === file.fileId) {
+      const updated = files.value.find(
+        (entry) => entry.fileId === file.fileId && entry.owner === file.owner
+      );
+      if (updated) {
+        await openFileDetails(updated);
+      }
+    }
   } catch (error) {
     downloadError.value =
       error.response?.data?.message || 'Unable to download this file right now.';

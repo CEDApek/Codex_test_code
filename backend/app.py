@@ -145,6 +145,84 @@ def category_label(value: str) -> str:
     return CATEGORY_LABEL_LOOKUP.get(normalized, normalized.title() or "Other")
 
 
+def iter_existing_files():
+    """Yield (SharedFile, owner_username) tuples for all known resources."""
+    for file_obj in system.global_resource_manager.get_active_files():
+        yield file_obj, "community"
+
+    for username, user in system.users.items():
+        for file_obj in user.resource_manager.get_active_files():
+            yield file_obj, username
+
+
+def compute_file_hash(path: str) -> Optional[str]:
+    if not path or not os.path.isfile(path):
+        return None
+    hasher = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(8192), b""):
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def find_name_conflict(username: str, base_name: str):
+    target = (base_name or "").strip().lower()
+    if not target:
+        return None, None
+    for file_obj, owner in iter_existing_files():
+        if owner == username:
+            continue
+        existing_base, _ = split_name(getattr(file_obj, "name", ""))
+        if existing_base.strip().lower() == target:
+            return file_obj, owner
+    return None, None
+
+
+def find_content_conflict(username: str, content_hash: str, short_hash: str):
+    target_full = (content_hash or "").lower()
+    target_short = (short_hash or "").lower()
+    if not target_full and not target_short:
+        return None, None
+    for file_obj, owner in iter_existing_files():
+        if owner == username:
+            continue
+        existing_short = str(getattr(file_obj, "file_hash", "") or "").lower()
+        existing_full = str(getattr(file_obj, "content_hash", "") or "").lower()
+        if target_short and existing_short and existing_short == target_short:
+            return file_obj, owner
+        if target_full and existing_full and existing_full == target_full:
+            return file_obj, owner
+        stored_hash = compute_file_hash(getattr(file_obj, "storage_path", ""))
+        if target_full and stored_hash and stored_hash.lower() == target_full:
+            return file_obj, owner
+    return None, None
+
+
+def duplicate_response(conflict_type: str, conflict_owner: str, conflict_file):
+    if conflict_type == "name":
+        message = (
+            f"A file with the same name already exists under {conflict_owner or 'another user'}."
+        )
+    else:
+        message = (
+            f"The uploaded file matches existing content from {conflict_owner or 'another user'}."
+        )
+    conflict_payload = None
+    if conflict_file is not None:
+        conflict_payload = serialize_shared_file(conflict_file, owner_username=conflict_owner or "community")
+    payload = {
+        "success": False,
+        "error": message,
+        "message": message,
+        "conflictType": conflict_type,
+        "conflictOwner": conflict_owner,
+        "conflictFile": conflict_payload,
+    }
+    return jsonify(payload), 409
+
+
 def split_name(name: str) -> Tuple[str, str]:
     base, ext = os.path.splitext(name or "")
     cleaned_ext = ext[1:].lower() if ext else ""
@@ -199,6 +277,8 @@ def serialize_shared_file(file_obj, owner_username: str) -> Dict[str, Any]:
         "hasStorage": bool(getattr(file_obj, "storage_path", "")),
         "uploadTime": upload_time,
         "uploadTimeIso": upload_iso,
+        "storagePath": getattr(file_obj, "storage_path", ""),
+        "contentHash": getattr(file_obj, "content_hash", ""),
     }
 
 
@@ -339,6 +419,30 @@ def api_file_categories():
     return jsonify(FILE_CATEGORIES)
 
 
+@app.route("/api/files/validate-name", methods=["GET"])
+def api_validate_file_name():
+    username = request.args.get("username", "").strip()
+    name = request.args.get("name", "").strip()
+    if not username or not name:
+        return error_response("username and name are required", 400)
+
+    base_name, _ = split_name(name)
+    conflict_file, conflict_owner = find_name_conflict(username, base_name)
+    if conflict_file is not None:
+        payload = serialize_shared_file(conflict_file, owner_username=conflict_owner or "community")
+        return jsonify(
+            {
+                "conflict": True,
+                "conflictType": "name",
+                "conflictOwner": conflict_owner,
+                "conflictFile": payload,
+                "baseName": base_name,
+            }
+        )
+
+    return jsonify({"conflict": False, "baseName": base_name})
+
+
 @app.route("/api/files", methods=["POST"])
 def api_publish_file():
     content_type = request.content_type or ""
@@ -348,12 +452,24 @@ def api_publish_file():
         form = request.form
         uploaded_file = request.files.get("file")
         username = (form.get("username") or "").strip()
-        name = (form.get("name") or "").strip()
+        provided_name = (form.get("name") or "").strip()
         description = (form.get("description") or "").strip()
         category_value = normalize_category(form.get("category"))
 
         if uploaded_file is None or not uploaded_file.filename:
             return error_response("a file must be provided", 400)
+
+        safe_name = secure_filename(uploaded_file.filename or "")
+        original_name = uploaded_file.filename or safe_name or "uploaded.bin"
+        name = provided_name or original_name
+        base_name, extension = split_name(name)
+
+        if not username or not name:
+            return error_response("username and name are required", 400)
+
+        conflict_file, conflict_owner = find_name_conflict(username, base_name)
+        if conflict_file is not None:
+            return duplicate_response("name", conflict_owner, conflict_file)
 
         try:
             uploaded_file.stream.seek(0)
@@ -371,25 +487,22 @@ def api_publish_file():
         finally:
             uploaded_file.stream.seek(0)
 
+        file_hash_full = hasher.hexdigest()
+        file_hash_short = file_hash_full[:16]
+
+        conflict_file, conflict_owner = find_content_conflict(username, file_hash_full, file_hash_short)
+        if conflict_file is not None:
+            return duplicate_response("content", conflict_owner, conflict_file)
+
         size_gb = bytes_to_gb(total_size)
         size_text = format_size(size_gb)
-        file_hash = hasher.hexdigest()[:16]
-
-        safe_name = secure_filename(uploaded_file.filename) or "uploaded.bin"
-        if not name:
-            name = uploaded_file.filename or safe_name
-
-        base_name, extension = split_name(uploaded_file.filename or safe_name)
-
-        if not username or not name:
-            return error_response("username and name are required", 400)
 
         ledger_user = ensure_ledger_user(username)
 
         user_folder = os.path.join(UPLOAD_ROOT, username)
         os.makedirs(user_folder, exist_ok=True)
         timestamp = int(time.time())
-        filename_parts = [str(timestamp), file_hash, safe_name]
+        filename_parts = [str(timestamp), file_hash_short, safe_name or "uploaded.bin"]
         stored_filename = "_".join(filter(None, filename_parts))
         stored_path = os.path.join(user_folder, stored_filename)
         uploaded_file.save(stored_path)
@@ -403,7 +516,8 @@ def api_publish_file():
             "description": description,
             "category": category_value,
             "extension": extension,
-            "file_hash": file_hash,
+            "file_hash": file_hash_short,
+            "content_hash": file_hash_full,
             "storage_path": stored_path,
         }
     else:
@@ -431,7 +545,17 @@ def api_publish_file():
         size_text = format_size(size_gb)
 
         base_name, extension = split_name(name)
-        file_hash = hashlib.sha256(f"{username}:{name}:{time.time()}".encode()).hexdigest()[:16]
+        conflict_file, conflict_owner = find_name_conflict(username, base_name)
+        if conflict_file is not None:
+            return duplicate_response("name", conflict_owner, conflict_file)
+
+        file_hash_full = hashlib.sha256(f"{username}:{name}:{time.time()}".encode()).hexdigest()
+        file_hash = file_hash_full[:16]
+
+        conflict_file, conflict_owner = find_content_conflict(username, file_hash_full, file_hash)
+        if conflict_file is not None:
+            return duplicate_response("content", conflict_owner, conflict_file)
+
         file_payload = {
             "name": name,
             "size_gb": size_gb,
@@ -442,6 +566,7 @@ def api_publish_file():
             "category": category_value,
             "extension": extension,
             "file_hash": file_hash,
+            "content_hash": file_hash_full,
         }
 
     success = system.declare_user_resources(username, file_payload)
@@ -490,6 +615,8 @@ def api_publish_file():
             "hasStorage": is_multipart,
             "uploadTime": now,
             "uploadTimeIso": datetime.utcfromtimestamp(now).isoformat() + "Z",
+            "contentHash": file_payload.get("content_hash", ""),
+            "storagePath": file_payload.get("storage_path", ""),
         }
 
     return jsonify(created), 201
@@ -510,6 +637,15 @@ def api_download_file(owner: str, file_id: int):
     file_obj, normalized_owner, _ = locate_file(owner, file_id)
     if not file_obj or not getattr(file_obj, "is_active", True):
         return error_response("file not found", 404)
+
+    downloader = request.args.get("downloader", "").strip()
+    if downloader:
+        ensure_ledger_user(downloader)
+        if normalized_owner and normalized_owner != "community" and downloader != normalized_owner:
+            ensure_ledger_user(normalized_owner)
+            ledger_success = system.download_resource(downloader, normalized_owner, int(file_id))
+            if not ledger_success:
+                return error_response("download failed (insufficient balance or file unavailable)", 400)
 
     file_name = getattr(file_obj, "name", f"download-{file_id}") or f"download-{file_id}"
     storage_path = getattr(file_obj, "storage_path", "")
