@@ -31,7 +31,7 @@
           <p v-if="wealthError" class="status error">{{ wealthError }}</p>
           <p v-else-if="miningError" class="status error">{{ miningError }}</p>
         </div>
-        <div class="wealth-board">
+        <div v-if="isAdmin" class="wealth-board">
           <div class="board-header">
             <h4>Account balances</h4>
             <button
@@ -55,6 +55,12 @@
           </ul>
           <p v-else class="status empty">
             Balances will appear after the first refresh.
+          </p>
+        </div>
+        <div v-else class="wealth-board notice">
+          <h4>Account balances</h4>
+          <p class="status">
+            Only administrators can review other members’ balances.
           </p>
         </div>
       </section>
@@ -177,6 +183,8 @@ onMounted(() => {
   fetchCategories();
 });
 
+const isAdmin = computed(() => user.value?.role === 'administrator');
+
 const wealthDisplay = computed(() => {
   if (!wealth.value || wealth.value.wealth === undefined) {
     return '—';
@@ -243,18 +251,30 @@ async function refreshWealth() {
   wealthError.value = '';
   try {
     const response = await axios.get('/api/ledger/balance', {
-      params: { username: user.value.username },
+      params: { username: user.value.username, viewer: user.value.username },
     });
     wealth.value = response.data;
   } catch (error) {
     wealthError.value =
       error.response?.data?.message || 'Unable to load your wealth information.';
   }
-  await refreshWealthBoard();
+  if (isAdmin.value) {
+    await refreshWealthBoard();
+  } else {
+    wealthBoard.value = [];
+    wealthBoardError.value = '';
+    wealthBoardLoading.value = false;
+  }
 }
 
 async function refreshWealthBoard() {
-  if (!user.value) return;
+  if (!user.value || !isAdmin.value) {
+    wealthBoardLoading.value = false;
+    if (!isAdmin.value) {
+      wealthBoard.value = [];
+    }
+    return;
+  }
   wealthBoardLoading.value = true;
   wealthBoardError.value = '';
   const accounts = Array.from(new Set([...knownAccounts.value, user.value.username]));
@@ -263,7 +283,7 @@ async function refreshWealthBoard() {
       accounts.map(async (account) => {
         try {
           const response = await axios.get('/api/ledger/balance', {
-            params: { username: account },
+            params: { username: account, viewer: user.value.username },
           });
           return {
             account,
@@ -507,6 +527,15 @@ function logout() {
   border: 1px solid rgba(255, 255, 255, 0.07);
   display: grid;
   gap: 0.75rem;
+}
+
+.wealth-board.notice {
+  align-content: start;
+  gap: 0.5rem;
+}
+
+.wealth-board.notice .status {
+  color: #c1c1c1;
 }
 
 .wealth-card h3,

@@ -38,15 +38,28 @@
       />
     </label>
 
-    <label class="category-field">
-      Category
-      <select v-model="category" :disabled="!categoryOptions.length">
-        <option v-for="option in categoryOptions" :key="option.value" :value="option.value">
-          {{ option.label }}
-        </option>
-        <option v-if="!categoryOptions.length" value="other">Other</option>
-      </select>
-    </label>
+    <fieldset class="category-picker">
+      <legend>Category</legend>
+      <p class="category-hint">Choose the grouping that best matches your upload.</p>
+      <div class="category-options" role="list">
+        <button
+          v-for="option in categoryOptions"
+          :key="option.value"
+          type="button"
+          class="category-option"
+          :class="{ active: category === option.value }"
+          role="listitem"
+          @click="selectCategory(option.value)"
+        >
+          <span class="label">{{ option.label }}</span>
+        </button>
+      </div>
+    </fieldset>
+
+    <div class="size-readout" v-if="selectedFile">
+      <span class="label">Calculated size</span>
+      <span class="value">{{ formattedSize }}</span>
+    </div>
 
     <div class="size-readout" v-if="selectedFile">
       <span class="label">Calculated size</span>
@@ -104,7 +117,12 @@ const fileInput = ref(null);
 const dragActive = ref(false);
 const nameManuallyEdited = ref(false);
 
-const categoryOptions = computed(() => props.categories || []);
+const categoryOptions = computed(() => {
+  if (Array.isArray(props.categories) && props.categories.length) {
+    return props.categories;
+  }
+  return [{ value: 'other', label: 'Other' }];
+});
 
 const formattedSize = computed(() => {
   if (!selectedFile.value) return 'No file selected yet';
@@ -188,6 +206,10 @@ function processSelectedFile(file) {
 
 function onNameInput() {
   nameManuallyEdited.value = true;
+}
+
+function selectCategory(value) {
+  category.value = value;
 }
 
 async function submit() {
@@ -388,13 +410,59 @@ button:not(:disabled):hover {
 .feedback.success {
   color: #2cb67d;
 }
-</style>
-.category-field select {
-  margin-top: 0.35rem;
-  padding: 0.7rem 1rem;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+
+.category-picker {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.24);
+  padding: 1rem 1.25rem;
+  display: grid;
+  gap: 0.75rem;
 }
+
+.category-picker legend {
+  padding: 0 0.35rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.category-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #b8b8b8;
+}
+
+.category-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.6rem;
+}
+
+.category-option {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #f5f5f5;
+  padding: 0.65rem 0.75rem;
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+  text-align: left;
+}
+
+.category-option .label {
+  pointer-events: none;
+}
+
+.category-option:hover {
+  transform: translateY(-1px);
+  background: rgba(127, 90, 240, 0.18);
+  box-shadow: 0 10px 24px rgba(127, 90, 240, 0.25);
+}
+
+.category-option.active {
+  border-color: rgba(44, 182, 125, 0.8);
+  background: linear-gradient(135deg, rgba(44, 182, 125, 0.25), rgba(127, 90, 240, 0.3));
+  box-shadow: 0 10px 26px rgba(44, 182, 125, 0.3);
+}
+</style>
 

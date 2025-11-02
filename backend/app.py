@@ -49,6 +49,11 @@ USERS: Dict[str, Dict[str, str]] = {
     "bob": {"password": "bob", "role": "member"},
 }
 
+
+def is_administrator(username: str) -> bool:
+    record = USERS.get(username)
+    return bool(record and record.get("role") == "administrator")
+
 FILE_CATEGORIES: List[Dict[str, str]] = [
     {"value": "document", "label": "Document"},
     {"value": "audio", "label": "Audio"},
@@ -271,6 +276,13 @@ def api_ledger_balance():
     username = request.args.get("username", "").strip()
     if not username:
         return error_response("missing field: username", 400)
+
+    viewer = request.args.get("viewer", "").strip()
+    requester = viewer or username
+    if viewer and viewer not in USERS:
+        return error_response("requester is not recognized", 403)
+    if requester != username and not is_administrator(requester):
+        return error_response("only administrators can view other balances", 403)
 
     ledger_user = ensure_ledger_user(username)
     balance = system.get_user_balance(username)
@@ -658,6 +670,17 @@ def api_mine():
 
 @app.route("/api/balance/<username>", methods=["GET"])
 def api_balance(username: str):
+    username = username.strip()
+    if not username:
+        return error_response("missing field: username", 400)
+
+    viewer = request.args.get("viewer", "").strip()
+    requester = viewer or username
+    if viewer and viewer not in USERS:
+        return error_response("requester is not recognized", 403)
+    if requester != username and not is_administrator(requester):
+        return error_response("only administrators can view other balances", 403)
+
     try:
         user = system.get_user(username)
         if not user:
