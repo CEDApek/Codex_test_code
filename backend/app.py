@@ -207,7 +207,7 @@ def duplicate_response(conflict_type: str, conflict_owner: str, conflict_file):
         )
     else:
         message = (
-            f"The uploaded file matches existing content from {conflict_owner or 'another user'}."
+            "The uploaded file matches existing content from other users"
         )
     conflict_payload = None
     if conflict_file is not None:
