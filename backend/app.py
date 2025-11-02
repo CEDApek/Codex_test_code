@@ -8,6 +8,7 @@ import re
 import sys
 import time
 import traceback
+from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -40,6 +41,9 @@ system: ResourceSharingSystem = ResourceSharingSystem()
 UPLOAD_ROOT = os.path.join(ROOT, "backend", "uploads")
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB cap per requirements
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
+
+DOWNLOAD_ATTEMPT_LIMIT = 2
+DOWNLOAD_ATTEMPTS: Dict[Tuple[str, str, int], int] = defaultdict(int)
 
 # Demo credential store used by the Vue frontend.
 USERS: Dict[str, Dict[str, str]] = {
@@ -155,6 +159,24 @@ def iter_existing_files():
             yield file_obj, username
 
 
+def build_download_key(downloader: str, owner: Optional[str], file_id: int) -> Tuple[str, str, int]:
+    return (
+        (downloader or "").strip().lower(),
+        (owner or "community").strip().lower() or "community",
+        int(file_id),
+    )
+
+
+def has_downloads_remaining(downloader: str, owner: Optional[str], file_id: int) -> bool:
+    key = build_download_key(downloader, owner, file_id)
+    return DOWNLOAD_ATTEMPTS[key] < DOWNLOAD_ATTEMPT_LIMIT
+
+
+def record_download_attempt(downloader: str, owner: Optional[str], file_id: int) -> None:
+    key = build_download_key(downloader, owner, file_id)
+    DOWNLOAD_ATTEMPTS[key] += 1
+
+
 def compute_file_hash(path: str) -> Optional[str]:
     if not path or not os.path.isfile(path):
         return None
@@ -207,7 +229,7 @@ def duplicate_response(conflict_type: str, conflict_owner: str, conflict_file):
         )
     else:
         message = (
-            "The uploaded file matches existing content from other users"
+            f"The uploaded file matches existing content from {conflict_owner or 'another user'}."
         )
     conflict_payload = None
     if conflict_file is not None:
@@ -640,12 +662,21 @@ def api_download_file(owner: str, file_id: int):
 
     downloader = request.args.get("downloader", "").strip()
     if downloader:
+        track_attempts = not (
+            normalized_owner and normalized_owner != "community" and downloader == normalized_owner
+        )
+        if track_attempts and not has_downloads_remaining(downloader, normalized_owner, file_id):
+            return error_response("download attempts max at 2", 429)
         ensure_ledger_user(downloader)
         if normalized_owner and normalized_owner != "community" and downloader != normalized_owner:
             ensure_ledger_user(normalized_owner)
             ledger_success = system.download_resource(downloader, normalized_owner, int(file_id))
             if not ledger_success:
                 return error_response("download failed (insufficient balance or file unavailable)", 400)
+            if track_attempts:
+                record_download_attempt(downloader, normalized_owner, file_id)
+        elif track_attempts:
+            record_download_attempt(downloader, normalized_owner, file_id)
 
     file_name = getattr(file_obj, "name", f"download-{file_id}") or f"download-{file_id}"
     storage_path = getattr(file_obj, "storage_path", "")
@@ -766,9 +797,18 @@ def api_download():
         if not downloader or not owner or file_id is None:
             return error_response("missing downloader/owner/file_id", 400)
 
+        normalized_owner = (owner or "").strip().lower() or "community"
+        track_attempts = not (
+            normalized_owner != "community" and downloader.strip().lower() == normalized_owner
+        )
+        if track_attempts and not has_downloads_remaining(downloader, normalized_owner, int(file_id)):
+            return error_response("download attempts max at 2", 429)
+
         # System-level convenience method per your doc
         ok = system.download_resource(downloader, owner, int(file_id))
         if ok:
+            if track_attempts:
+                record_download_attempt(downloader, normalized_owner, int(file_id))
             return jsonify({"success": True, "message": "download transaction added to pending pool"})
         else:
             return error_response("download failed (insufficient balance, missing file, or other)", 400)

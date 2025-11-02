@@ -98,7 +98,32 @@ In addition to the file tools, the top of the dashboard shows your current
 wealth, pending transaction count, a quick mining button, and an account wealth
 board that tracks the seeded demo users (`admin`, `alice`, `bob`) alongside the
 logged-in account. Every mining run is recorded in a short activity feed so you
-can copy block hashes for lab notes.
+can copy block hashes for lab notes. Mining now plays a themed loading scene for
+roughly 3–5 seconds so you can document the confirmation window during tests.
+
+### Platform rules and behaviours
+
+- **Upload requirements** – files must be between 0 and 100&nbsp;MB. The form
+  auto-detects the size, requires a category (using the built-in theme tiles),
+  and checks both the filename (without extension) and the file hash against the
+  existing catalogue to prevent plagiarism before the data reaches the ledger.
+- **Duplicate protection** – the backend validates the upload name and content
+  again before committing the transaction. If a clash is detected, the upload is
+  rejected and the interface highlights the issue with a loading overlay while
+  the verification runs.
+- **Download limits** – community files can only be downloaded twice per user.
+  A third attempt returns `download attempts max at 2`, preventing users from
+  artificially inflating the ledger metrics. File owners can still retrieve
+  their own uploads without restriction.
+- **Download rewards** – whenever another member downloads your file the system
+  queues a bonus transaction so the next mining run automatically credits the
+  owner.
+- **Wealth visibility** – only the administrator account can query other
+  members’ balances. Non-admins see a reminder instead of the wealth board, but
+  everyone can view their own credits and pending transactions.
+- **Mining workflow** – use the “Mine pending transactions” button to commit
+  rewards. The simulated delay ensures your screenshots capture a consistent
+  mining experience while the backend actually processes the block.
 
 ### Demo credentials and multi-user testing
 

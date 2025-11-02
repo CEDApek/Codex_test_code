@@ -8,6 +8,16 @@
     <LoginForm v-if="!user" @logged-in="handleLoggedIn" />
 
     <section v-else class="dashboard">
+      <transition name="fade">
+        <div v-if="miningOverlay" class="mining-overlay" role="status" aria-live="polite">
+          <div class="mining-card">
+            <h3>Mining in progress…</h3>
+            <p>Simulating block confirmation. Hang tight while we validate the ledger.</p>
+            <div class="loader" aria-hidden="true"></div>
+          </div>
+        </div>
+      </transition>
+
       <header class="dashboard-header">
         <div class="user-summary">
           <h2>Hello, {{ user.username }}!</h2>
@@ -163,8 +173,12 @@ const uploading = ref(false);
 const wealth = ref(null);
 const wealthError = ref('');
 const mining = ref(false);
+const miningOverlay = ref(false);
 const miningError = ref('');
 const minedBlocks = ref([]);
+
+const MINING_SIM_BASE = 3000;
+const MINING_SIM_VARIANCE = 2000;
 
 const knownAccounts = ref(['admin', 'alice', 'bob']);
 const wealthBoard = ref([]);
@@ -211,6 +225,10 @@ async function fetchCategories() {
   } catch (error) {
     // Non-fatal; the upload form will fall back to default categories.
   }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function ensureKnownAccount(account) {
@@ -413,11 +431,21 @@ async function downloadFile(file) {
 async function minePending() {
   if (!user.value) return;
   mining.value = true;
+  miningOverlay.value = true;
   miningError.value = '';
   try {
-    const response = await axios.post('/api/ledger/reward', {
+    const requestPromise = axios.post('/api/ledger/reward', {
       username: user.value.username,
     });
+    const simulatedDelay =
+      MINING_SIM_BASE + Math.floor(Math.random() * MINING_SIM_VARIANCE);
+    const delayPromise = delay(simulatedDelay);
+    let response;
+    try {
+      response = await requestPromise;
+    } finally {
+      await delayPromise;
+    }
     const block = response.data?.block || {};
     const entry = {
       index: block.index ?? minedBlocks.value.length + 1,
@@ -431,6 +459,7 @@ async function minePending() {
       error.response?.data?.message || 'No pending transactions to mine right now.';
   } finally {
     mining.value = false;
+    miningOverlay.value = false;
     await refreshWealth();
     await fetchFiles();
   }
@@ -482,6 +511,7 @@ function logout() {
   border: 1px solid rgba(255, 255, 255, 0.08);
   display: grid;
   gap: 1.75rem;
+  position: relative;
 }
 
 .dashboard-header {
@@ -526,6 +556,60 @@ function logout() {
 
 .logout-button:hover {
   background: rgba(255, 255, 255, 0.18);
+}
+
+.mining-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 12, 18, 0.82);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  z-index: 5;
+}
+
+.mining-card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 18px;
+  padding: 2.25rem;
+  text-align: center;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+  max-width: 420px;
+  display: grid;
+  gap: 1rem;
+}
+
+.mining-card h3 {
+  margin: 0;
+  font-size: 1.6rem;
+  letter-spacing: 0.04em;
+}
+
+.mining-card p {
+  margin: 0;
+  color: #d5d5d5;
+}
+
+.loader {
+  margin: 0 auto;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 50%;
+  border: 4px solid rgba(127, 90, 240, 0.35);
+  border-top-color: #2cb67d;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .ledger-summary {
