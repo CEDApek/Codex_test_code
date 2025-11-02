@@ -1,6 +1,6 @@
 <template>
   <form class="login-card" @submit.prevent="submit">
-    <h2>Login</h2>
+    <h2>{{ mode === 'login' ? 'Login' : 'Create account' }}</h2>
     <label>
       Username
       <input v-model="username" type="text" autocomplete="username" required />
@@ -9,10 +9,37 @@
       Password
       <input v-model="password" type="password" autocomplete="current-password" required />
     </label>
+    <label v-if="mode === 'register'">
+      Confirm password
+      <input
+        v-model="confirmPassword"
+        type="password"
+        autocomplete="new-password"
+        required
+      />
+    </label>
     <button type="submit" :disabled="loading">
-      {{ loading ? 'Signing in…' : 'Enter Nexus' }}
+      {{
+        loading
+          ? mode === 'login'
+            ? 'Signing in…'
+            : 'Creating account…'
+          : mode === 'login'
+          ? 'Enter Nexus'
+          : 'Create account'
+      }}
     </button>
     <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="success" class="success">{{ success }}</p>
+    <p class="switcher">
+      <button type="button" class="link-button" @click="toggleMode" :disabled="loading">
+        {{
+          mode === 'login'
+            ? 'Need an account? Register for free'
+            : 'Already registered? Back to login'
+        }}
+      </button>
+    </p>
   </form>
 </template>
 
@@ -22,15 +49,33 @@ import axios from 'axios';
 
 const emit = defineEmits(['logged-in']);
 
-const username = ref('admin');
-const password = ref('admin');
+const mode = ref('login');
+const username = ref('');
+const password = ref('');
+const confirmPassword = ref('');
 const loading = ref(false);
 const error = ref('');
+const success = ref('');
 
 async function submit() {
   error.value = '';
+  success.value = '';
+
+  if (mode.value === 'register' && password.value !== confirmPassword.value) {
+    error.value = 'Passwords do not match. Please try again.';
+    return;
+  }
+
   loading.value = true;
   try {
+    if (mode.value === 'register') {
+      await axios.post('/api/register', {
+        username: username.value,
+        password: password.value,
+      });
+      success.value = 'Account created! Signing you in with a fresh ledger identity.';
+    }
+
     const response = await axios.post('/api/login', {
       username: username.value,
       password: password.value,
@@ -41,6 +86,15 @@ async function submit() {
   } finally {
     loading.value = false;
   }
+}
+
+function toggleMode() {
+  if (loading.value) return;
+  mode.value = mode.value === 'login' ? 'register' : 'login';
+  error.value = '';
+  success.value = '';
+  password.value = '';
+  confirmPassword.value = '';
 }
 </script>
 
@@ -93,5 +147,33 @@ button:not(:disabled):hover {
   margin: 0;
   color: #ff6b6b;
   font-weight: 500;
+}
+
+.success {
+  margin: 0;
+  color: #2cb67d;
+  font-weight: 500;
+}
+
+.switcher {
+  margin: 0;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #89b4ff;
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.95rem;
+}
+
+.link-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.link-button:not(:disabled):hover {
+  text-decoration: underline;
 }
 </style>
